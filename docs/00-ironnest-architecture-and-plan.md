@@ -282,8 +282,9 @@ is the spike's jagua number.
 
 ## 10. Phased roadmap
 
-- **Phase 0 — Spike** (§9): density + x-platform determinism proofs. *(source verify ✅; density +
-  x-platform determinism proofs still pending — see Phase 3.)*
+- **Phase 0 — Spike** (§9): density + x-platform determinism proofs. *(source verify ✅; density
+  proof ✅ via Phase 2 — 92–99 % rectangular, 79 % irregular; x-platform determinism harness ✅ wired
+  in Phase 3 — the cross-platform CI golden is the standing proof, green on its first push.)*
 - **Phase 1 — Fork & f64. ✅ DONE (2026-06-20).** Vendored the minimal jagua subset into
   `crates/geo` (geometry + `fpa`) + `crates/cde` (CDE + entities + io + bpp + assertions); flipped
   every `f32`→`Scalar` (=f64); ported with the crate-split done via `pub use ironnest_geo as
@@ -302,13 +303,24 @@ is the spike's jagua number.
     rotations (default cardinal). Anchor-free placements. **Density: 87–99% on rectangular parts
     (beats the 85–90% target; ~75.5% prior Python), ~65% on irregular.** In-process determinism
     golden holds; 22 tests; gate green. Committed `ed8ba72`. (See `docs/02` for full design.)
-  - **2b Separation search ⏳ NEXT (the irregular-density driver).** Greedy construction can't
-    *discover* interlocking arrangements (two triangles → a square; a part nesting in a concavity).
-    A tractable pole-gradient separation was prototyped and **reverted** — it doesn't converge
-    (local overlap minima; inscribed poles under-cover). Needs the **full GLS** (penalty weights +
-    restarts + tuning) **or an accurate polygon penetration / MTV measure** — a focused,
-    determinism-critical build. **Design + findings + plan: `docs/02-optimizer-and-separation-search.md`.**
-- **Phase 3 — Determinism harness.** The test pyramid (§6) incl. the cross-platform CI golden.
+  - **2b Separation search ✅ DONE (2026-06-21).** sparrow's overlap-minimization **Guided Local
+    Search** ported deterministically into `crates/optimizer/src/sep/` (proxy → tracker → evaluator →
+    sampler/coord-descent → strike loop → bin-packing insertion driver). Allows overlap then shoves
+    parts apart under GLS weights — *discovers* interlocking arrangements greedy can't (two triangles
+    → a square, **2/2**). Irregular density: pentagon **65 → 79 %**, bricks **87 → 92 %**. Fixed
+    budgets (no clock), single worker, PCG64 + Fisher-Yates shuffle, no Wiggle, canonical summation.
+    Adversarial review caught + fixed one blocker (unplaceable-pose guard). Committed `39370c6`.
+    **Design + what-shipped: `docs/02-optimizer-and-separation-search.md` (§10).**
+- **Phase 3 — Determinism harness. ✅ DONE (2026-06-21).** The §6 test pyramid landed: (1) in-process
+  run-to-run equality (`tests/nest.rs`); (2) **cross-subprocess** byte-diff; (3) per-commit **golden
+  placements** — an `insta` snapshot of the canonical solver output (`item x y rot`, full-precision
+  f64) produced by the `golden_dump` bin over a fixed `min_sep=0` corpus, blessed on macOS-arm64; (4)
+  the **cross-platform CI golden** — `.github/workflows/ci.yml` runs build + clippy(`-D warnings`) +
+  fmt + the golden (debug **and** release) on **macOS-arm64 + Windows-x64 + linux-x64**, so any
+  divergence fails loudly. Verified locally: same-platform debug == release == blessed snapshot; the
+  *cross-platform* pass executes on the first push (can't run Win/Linux on the dev box). `min_sep=0`
+  keeps the corpus inside the proven-deterministic envelope (the geo-buffer offset, risk #2, is still
+  not byte-stable). 37 tests green. (5) the consumer `.CNC` sha256 golden stays `drawing_and_gcode`'s.
 - **Phase 4 — PyO3 wheel + CI.** `crates/py`, maturin + cibuildwheel → PyPI (Win-x64, macOS-arm64,
   linux), abi3-py313, committed `Cargo.lock`, `cargo deny` + SBOM.
 - **Phase 5 — Consumer integration** (`drawing_and_gcode` #258): adapter, remove Python engines,

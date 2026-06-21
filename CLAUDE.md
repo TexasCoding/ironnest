@@ -13,8 +13,9 @@ file is the short version.
 
 **Status (2026-06-21):** Phase 1 (fork→f64) ✅ · Phase 2a (constructive+compaction nester, 92–99% on
 rectangular parts) ✅ · Phase 2b (sparrow GLS **separation search**, `crates/optimizer/src/sep/`;
-irregular density pentagon 65→79 %, bricks 87→92 %, discovers interlocks — see `docs/02` §10) ✅ ·
-**Next: Phase 3 — the cross-platform determinism golden** (the byte-identical CI gate). See `docs/00` §10.
+irregular density pentagon 65→79 %, bricks 87→92 %, discovers interlocks — `docs/02` §10) ✅ · Phase 3
+(**determinism harness**: `golden_dump` bin + `insta` golden + `.github/workflows/ci.yml` x-platform
+gate on macOS-arm64/Win-x64/linux) ✅ · **Next: Phase 4 — PyO3 wheel + cibuildwheel → PyPI.** See `docs/00` §10.
 
 ## ⛔ Two prime directives
 

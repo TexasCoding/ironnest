@@ -1,0 +1,65 @@
+# ironnest CI — the cross-platform determinism gate (Phase 3, the headline contract).
+#
+# The same nest MUST produce byte-identical placements on macOS-arm64 (dev) == Windows-x64 (prod)
+# == linux-x64. This is proven, not assumed: the `golden_placements_match_snapshot` test (an insta
+# snapshot of the solver output, committed/blessed once on macOS-arm64) re-runs on every platform
+# here. Any divergence — cross-platform, or an unintended output change on a commit — fails loudly
+# and forces a deliberate re-bless. See docs/00 §6 (the test pyramid) and docs/02 §10.
+#
+# Scope: the pure-Rust engine crates only. `ironnest-py` (the PyO3 cdylib) is excluded — its
+# cross-platform link story is maturin/cibuildwheel's job in Phase 4, and it has no bearing on the
+# determinism of solver output.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Never `-C target-cpu=native` — it diverges across the fleet (CLAUDE.md). Leave RUSTFLAGS default.
+
+jobs:
+  determinism:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS-14 = Apple-silicon (arm64); the others are x86-64 — the three shipping targets.
+        os: [macos-14, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # rustup honours rust-toolchain.toml: this installs the pinned 1.96.0 plus the components it
+      # lists (clippy, rustfmt, …). No version drift — the toolchain is the same one used in dev.
+      - name: Install pinned toolchain
+        run: rustup show
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Formatting
+        run: cargo fmt --all --check
+
+      # The determinism lint gate (banned: HashMap, Instant, std transcendentals, mul_add, …).
+      - name: Clippy (determinism gate)
+        run: cargo clippy --workspace --exclude ironnest-py --all-targets --locked -- -D warnings
+
+      # Debug build: assertions on (catches CDE quadtree-invariant violations) + runs the golden.
+      - name: Test (debug, assertions on)
+        run: cargo test --workspace --exclude ironnest-py --locked
+
+      # Release build: the shipped profile (codegen-units=1 + thin LTO). The golden must match the
+      # very same committed snapshot here too — proving debug == release and that the optimization
+      # pipeline does not perturb the byte-identical output.
+      - name: Test (release, shipped profile)
+        run: cargo test --workspace --exclude ironnest-py --release --locked
