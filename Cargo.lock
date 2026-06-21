@@ -181,6 +181,7 @@ name = "ironnest-optimizer"
 version = "0.0.0"
 dependencies = [
  "ironnest-cde",
+ "ironnest-geo",
 ]
 
 [[package]]
