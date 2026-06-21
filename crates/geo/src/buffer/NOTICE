@@ -1,0 +1,19 @@
+This directory (crates/geo/src/buffer/) is VENDORED third-party code:
+
+    geo-buffer, version 0.2.0
+    https://crates.io/crates/geo-buffer  ·  https://github.com/1011-git/geo-buffer
+    Copyright (c) Teneleven Corp <1011@1011.co.kr>, Inseop Youn <pinebananais@gmail.com>
+    Licensed under the Apache License, Version 2.0
+    http://www.apache.org/licenses/LICENSE-2.0
+
+It is included here under the terms of the Apache License 2.0 (compatible with this
+repository's MPL-2.0). The original algorithm — a straight-skeleton polygon offsetter —
+is unchanged in substance.
+
+Modifications by the ironnest project (also Apache-2.0 for these files):
+  - util/ray/mod.rs `rotate_by`: std `f64::sin`/`f64::cos` → the pure-Rust `libm` crate, so
+    the offset is byte-identical across platforms (ironnest's determinism contract).
+  - skeleton/mod.rs: the two `geo`-crate traits used (`Winding`, `Contains`) are reimplemented
+    locally on `geo-types`, removing the dependency on the full `geo` crate (and its transitive
+    `rstar` → `heapless` → `atomic-polyfill`, RUSTSEC-2023-0089).
+  - module wiring (paths, vendored as a private module), and upstream doctests are not run.

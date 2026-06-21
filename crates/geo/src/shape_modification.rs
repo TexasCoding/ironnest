@@ -342,32 +342,26 @@ impl CornerType {
 }
 
 /// Offsets a [`SPolygon`] by a certain `distance` either inwards or outwards depending on the [`ShapeModifyMode`].
-/// Relies on the [`geo_buffer`](https://crates.io/crates/geo-buffer) crate.
+/// Relies on the **vendored** straight-skeleton offsetter ([`crate::buffer`], ex-`geo-buffer 0.2`).
 ///
-/// ⚠ DETERMINISM(ironnest) — the one tracked cross-platform residual (docs/00 hazard #2, docs/01
-/// plan-risk #2). `geo-buffer 0.2`'s rounded arc-joins call **std** `f64::sin`/`f64::cos`
-/// internally (its `ray::rotate_by`), which route through the platform C libm and differ across
-/// glibc / MSVCRT / Darwin in the last ULPs. This output feeds `OriginalShape::convert_to_internal`
-/// → the item's internal collision shape, so whenever `min_item_separation != 0` (offset != 0) it
-/// shapes *placement geometry* and can flip a collision decision → NON-byte-identical across
-/// targets. Registry-pinning alone is therefore NOT sufficient. Before shipping nonzero-separation
-/// configs: replace this with our own deterministic offsetter (miter / pinned-arc), OR vendor
-/// `geo-buffer` and swap its `sin`/`cos` for `libm`, then prove bit-stability in the x-platform
-/// golden. Until then, treat any nonzero min-separation layout as not-yet-byte-identical.
+/// DETERMINISM(ironnest) — this was docs/00 hazard #2 / docs/01 plan-risk #2 (the lone cross-platform
+/// residual): upstream `geo-buffer`'s rounded arc-joins called **std** `f64::sin`/`cos` (platform C
+/// libm, ULP-divergent). We vendored the offsetter and routed those two lines through the pure-Rust
+/// `libm` crate, so this output — which feeds `OriginalShape::convert_to_internal` → the item's
+/// collision shape whenever `min_item_separation != 0` — is now **byte-identical on every target**.
+/// The x-platform golden covers a nonzero-`min_sep` case as proof.
 pub fn offset_shape(sp: &SPolygon, mode: ShapeModifyMode, distance: Scalar) -> Result<SPolygon> {
     let offset = match mode {
         ShapeModifyMode::Deflate => -distance,
         ShapeModifyMode::Inflate => distance,
     };
 
-    // Convert the SPolygon to a geo_types::Polygon.
-    // FORK(ironnest): with `Scalar = f64` and `geo-buffer` being f64-native, jagua's `f32`↔`f64`
-    // round-trip (`f64::from(..)` / `.to_f32()`) disappears — coordinates pass through unchanged.
+    // Convert the SPolygon to a geo_types::Polygon. f64-native throughout — no f32 round-trip.
     let geo_poly =
         geo_types::Polygon::new(sp.vertices.iter().map(|p| (p.0, p.1)).collect(), vec![]);
 
-    // Create the offset polygon
-    let geo_poly_offsets = geo_buffer::buffer_polygon_rounded(&geo_poly, offset).0;
+    // Create the offset polygon (vendored, libm-deterministic).
+    let geo_poly_offsets = crate::buffer::buffer_polygon_rounded(&geo_poly, offset).0;
 
     let geo_poly_offset = match geo_poly_offsets.len() {
         0 => bail!("Offset resulted in an empty polygon"),

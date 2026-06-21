@@ -18,8 +18,10 @@ irregular density pentagon 65→79 %, bricks 87→92 %, discovers interlocks —
 gate on macOS-arm64/Win-x64/linux) ✅ · Phase 4 (**PyO3 `ironnest` wheel** via `crates/ironnest` façade +
 `crates/py`; abi3-py313, maturin + `wheels.yml`/`supply-chain.yml`; `import ironnest` validated) ✅ ·
 Phase 6 (**interior-void holes + multi-sheet**: `nest(holes…)` keep-out zones = "nesting inside parts",
-`nest_multi(sheets…)`; bound in the wheel — `docs/00` §10) ✅ · **Next: Phase 5 — consumer integration**
-(`drawing_and_gcode` #258). See `docs/00` §10.
+`nest_multi(sheets…)`; bound in the wheel — `docs/00` §10) ✅ · Determinism-hardening (**risk #2
+resolved**: vendored libm-deterministic min-sep offsetter in `crates/geo/src/buffer/`; dropped
+`geo`/`atomic-polyfill`; min_sep>0 now x-platform byte-identical) ✅ · **Next: Phase 5 — consumer
+integration** (`drawing_and_gcode` #258). See `docs/00` §10.
 
 ## ⛔ Two prime directives
 
@@ -49,12 +51,13 @@ import-only-then-resorted, `Instant` is metadata). Keep it that way. The verifie
   (entries ∈ {0, ±1}) directly** on the placement path — for *exactness / cut-realizability* (zero
   trig, no sub-ULP fuzz on placed coords), an optimization independent of the determinism `libm`
   already guarantees. Continuous rotation, if ever added, must likewise route through `libm`.
-- **The min-separation offset must be deterministic.** jagua uses `geo-buffer::buffer_polygon_rounded`
-  (arc joins, third-party) — **replace it** with our own deterministic offsetter (miter / pinned
-  arc), or vendor it and swap its trig to `libm`, then prove bit-stability in the x-platform golden.
-  ⚠ **The Phase-1 audit found `geo-buffer 0.2` calls std `f64::sin`/`cos` internally — so registry
-  pinning alone is NOT sufficient.** Live only when `min_item_separation != 0`; until fixed, treat
-  nonzero-separation layouts as not-yet-byte-identical. (See `docs/00` §11 risk #2.)
+- **The min-separation offset is deterministic. ✅ (was risk #2; resolved 2026-06-21.)** jagua used
+  `geo-buffer::buffer_polygon_rounded`, whose arc-joins called std `sin`/`cos` (platform-divergent).
+  We **vendored** that straight-skeleton offsetter into `crates/geo/src/buffer/` and routed its two
+  `rotate_by` trig lines through `libm`; the two `geo` traits it used were reimplemented on
+  `geo-types`, so `geo`/`rstar`/`heapless`/`atomic-polyfill` are gone. `offset_shape` now calls the
+  vendored fn; a nonzero-`min_sep` case is in the x-platform golden. **Keep the offsetter's trig on
+  `libm`** — never revert to std. (See `docs/00` §11 risk #2 / the Determinism-hardening roadmap entry.)
 - **No RNG except our own seeded, portable PRNG.** The optimizer **vendors a self-contained PCG64**
   (`crates/optimizer/src/prng.rs`) — no `rand` dep, so the exact bit-stream is version-independent
   and byte-stable forever. Explicit seed always; no `getrandom`/`rand::random()` fallback, ever.

@@ -10,6 +10,11 @@ publish      = false
 [lints]
 workspace = true
 
+# The vendored straight-skeleton offsetter (`src/buffer/`) carries upstream `geo_buffer::`/`geo::`
+# doctests that don't resolve in this crate; the crate has no real doctests of its own, so disable.
+[lib]
+doctest = false
+
 [dependencies]
 # Pinned to jagua-rs 0.7.2's versions (pure-Rust, no C / no build.rs → clean cross-platform wheels).
 ordered-float = "5.0"
@@ -19,11 +24,13 @@ log           = "0.4"
 serde         = { version = "1.0", features = ["derive"] }
 float-cmp     = "0.10"
 ndarray       = "0.17"
+# geo-types: just the primitive types (Polygon/LineString/Coord) used by the vendored offsetter in
+# `src/buffer/`. We deliberately do NOT depend on the full `geo` crate (it pulls rstar → heapless →
+# the unmaintained atomic-polyfill); the offsetter's two `geo` traits are reimplemented locally.
 geo-types     = "0.7"
-geo-buffer    = "0.2"      # min-sep offsetter (plan risk #2: prove bit-stable or replace)
 # num-traits via a direct dep (jagua reached it through `rand_distr::num_traits`; we drop the
 # rand_* name from the geometry leaf — no RNG lives here).
 num-traits    = "0.2"
-# libm: pure-Rust, cross-platform byte-identical transcendentals. Replaces std `sin_cos`/`atan2`
-# on the (non-cardinal) rotation path; the placement path uses exact cardinal matrices instead.
+# libm: pure-Rust, cross-platform byte-identical transcendentals. Replaces std `sin_cos`/`atan2` on
+# the (non-cardinal) rotation path AND the vendored offsetter's `rotate_by` (src/buffer/util/ray).
 libm          = "0.2"

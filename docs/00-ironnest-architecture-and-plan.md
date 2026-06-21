@@ -343,8 +343,16 @@ is the spike's jagua number.
   keep-outs, and never overlap a hole). `nest_multi(sheets…)` + `Sheet`/`MultiSheetSolution` spill
   demand across sheets with deterministic per-sheet seeds. Re-exported via `crates/ironnest`; bound in
   the wheel (`nest(holes)` + `nest_multi`, validated `import ironnest` + pytest). A `sheet-with-hole`
-  case joined the cross-platform golden (the no-hole cases stayed byte-identical). Caveat unchanged:
-  `min_sep>0` inflates holes via geo-buffer (risk #2, not byte-stable) — the golden uses `min_sep=0`.
+  case joined the cross-platform golden (the no-hole cases stayed byte-identical).
+- **Determinism hardening — deterministic min-sep offsetter. ✅ DONE (2026-06-21).** Resolved risk #2
+  (the lone cross-platform residual): replaced `geo-buffer` (whose rounded arc-joins called std
+  `sin`/`cos`) by **vendoring** its straight-skeleton offsetter into `crates/geo/src/buffer/` and
+  routing the two `rotate_by` trig lines through `libm` (byte-identical on every target). The two
+  `geo`-crate traits it used (`Winding`/`Contains`) were reimplemented on `geo-types`, so the whole
+  `geo → rstar → heapless → atomic-polyfill` chain (incl. the unmaintained-`atomic-polyfill` RUSTSEC
+  advisory) is **dropped** — `cargo deny` passes with no ignore. A nonzero-`min_sep` case
+  (`separated-squares`) joined the cross-platform golden as the proof; **min-separation layouts are
+  now byte-identical across the fleet.**
 
 ---
 
@@ -352,17 +360,15 @@ is the spike's jagua number.
 
 1. ~~**f64 port size**~~ **RESOLVED** (verified): typed rewrite of ~41 files, mechanical, ~1–2
    days; no `fsize` flag exists. Mitigated by adding our own `Scalar` alias. See `01-…md` §A.
-2. **Cross-platform byte-identity actually holding** — after the Phase-1 fork, **exactly ONE**
-   residual remains (everything else verified clean): `sin_cos`/`atan2` are now routed through
-   pure-Rust `libm` (portable; runs on the placement path via `compose()` but byte-identically), so
-   the lone hazard is **`geo-buffer`'s rounded offset**. ⚠ **Sharpened by the Phase-1 fork audit:**
-   `geo-buffer 0.2` calls **std `f64::sin`/`f64::cos` internally** (its `ray::rotate_by`), so
-   *registry-pinning alone is NOT enough* — its output is platform-divergent. It only matters when
-   `min_item_separation != 0` (offset feeds the item's collision shape). **Action before shipping
-   nonzero-separation configs:** replace with our own deterministic offsetter (miter/pinned-arc), OR
-   vendor `geo-buffer` and swap its `sin`/`cos` for `libm`, then prove bit-stability in the
-   x-platform golden. Until then, treat nonzero-min-sep layouts as not-yet-byte-identical. The
-   x-platform CI golden is the safety net (fails loud).
+2. ~~**Cross-platform byte-identity — the `geo-buffer` offset residual**~~ **RESOLVED (2026-06-21).**
+   This was the lone residual after the Phase-1 fork: `geo-buffer 0.2`'s rounded arc-joins called std
+   `f64::sin`/`cos` (its `ray::rotate_by`), platform-divergent, active whenever `min_item_separation
+   != 0`. **Fixed by vendoring** the straight-skeleton offsetter into `crates/geo/src/buffer/` and
+   routing those two trig lines through pure-Rust `libm`; the two `geo` traits it used were
+   reimplemented on `geo-types`, dropping `geo → rstar → heapless → atomic-polyfill` entirely. The
+   x-platform CI golden now carries a nonzero-`min_sep` case (`separated-squares`) as the standing
+   proof. **No known cross-platform determinism residual remains.** (`-C target-cpu=native` stays
+   banned; the in-process + x-platform goldens are the loud safety net.)
 3. **Density clears the bar** — `lbf` is a weak heuristic and `sparrow` is strip-packing; our
    optimizer must reach ~85–90% on a *fixed irregular bin*. The spike measures it before we invest.
 4. **jagua edition 2024 / Rust ≥ ~1.85** in CI; no declared MSRV upstream → pin the toolchain.

@@ -12,9 +12,10 @@
 //! `cargo run -p ironnest-optimizer --bin golden_dump`.
 //!
 //! DETERMINISM(ironnest):
-//! - **`min_sep = 0` on every case** — nonzero separation routes through `geo-buffer`, which still
-//!   calls std `sin`/`cos` (docs/00 risk #2), so those layouts are *not yet* byte-identical
-//!   cross-platform. The golden stays strictly inside the proven-deterministic envelope.
+//! - The corpus includes a **nonzero-`min_sep`** case (`separated-squares`). Separation routes
+//!   through the *vendored, libm-deterministic* offsetter (`ironnest_geo::buffer`, ex-`geo-buffer`),
+//!   so these layouts are now byte-identical cross-platform too — this case is the standing proof
+//!   that docs/00 risk #2 is resolved.
 //! - Coordinates are printed with the default `f64` `Display` (Rust's pure-Rust shortest-round-trip
 //!   `flt2dec`), which is a deterministic, **injective** function of the bits: two different f64
 //!   values never print the same string, so the text diff is a faithful byte-identity check.
@@ -39,6 +40,7 @@ struct Case {
     qty: Vec<usize>,
     container: Vec<[Scalar; 2]>,
     holes: Vec<Vec<[Scalar; 2]>>,
+    min_sep: Scalar,
     rotations: Vec<Scalar>,
     seed: u64,
     budget: u64,
@@ -63,6 +65,7 @@ fn corpus() -> Vec<Case> {
             qty: vec![6, 4],
             container: rect(60.0, 60.0),
             holes: vec![],
+            min_sep: 0.0,
             rotations: CARDINAL.to_vec(),
             seed: 7,
             budget: 1500,
@@ -74,6 +77,7 @@ fn corpus() -> Vec<Case> {
             qty: vec![4],
             container: rect(50.0, 50.0),
             holes: vec![],
+            min_sep: 0.0,
             rotations: vec![],
             seed: 1,
             budget: 800,
@@ -85,6 +89,7 @@ fn corpus() -> Vec<Case> {
             qty: vec![2],
             container: rect(11.0, 11.0),
             holes: vec![],
+            min_sep: 0.0,
             rotations: CARDINAL.to_vec(),
             seed: 42,
             budget: 2000,
@@ -96,6 +101,7 @@ fn corpus() -> Vec<Case> {
             qty: vec![10],
             container: rect(80.0, 80.0),
             holes: vec![],
+            min_sep: 0.0,
             rotations: CARDINAL.to_vec(),
             seed: 3,
             budget: 2000,
@@ -109,8 +115,23 @@ fn corpus() -> Vec<Case> {
             qty: vec![12],
             container: rect(60.0, 60.0),
             holes: vec![center_hole],
+            min_sep: 0.0,
             rotations: CARDINAL.to_vec(),
             seed: 5,
+            budget: 1000,
+        },
+        // Nonzero min-separation path: each part is inflated by min_sep/2 via the vendored, libm-
+        // deterministic offsetter (ex-geo-buffer). This is the proof that resolving docs/00 risk #2
+        // makes separated layouts byte-identical across platforms.
+        Case {
+            name: "separated-squares",
+            items: vec![rect(10.0, 10.0)],
+            qty: vec![4],
+            container: rect(60.0, 60.0),
+            holes: vec![],
+            min_sep: 4.0,
+            rotations: CARDINAL.to_vec(),
+            seed: 8,
             budget: 1000,
         },
     ]
@@ -127,7 +148,7 @@ fn dump() -> String {
             &case.qty,
             &case.container,
             &case.holes,
-            0.0, // min_sep = 0 — see the module note (geo-buffer is not yet byte-deterministic)
+            case.min_sep,
             &case.rotations,
             case.seed,
             case.budget,

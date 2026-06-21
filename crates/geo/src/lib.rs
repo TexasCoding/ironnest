@@ -62,6 +62,10 @@ mod transformation;
 
 mod original_shape;
 
+/// Vendored straight-skeleton polygon offsetter (geo-buffer 0.2.0, Apache-2.0), forked for
+/// determinism (libm trig) and to drop the `geo` dependency. Used by [`shape_modification`].
+mod buffer;
+
 /// Set of functions to modify geometric shapes
 pub mod shape_modification;
 
