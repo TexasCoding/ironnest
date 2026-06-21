@@ -4,7 +4,8 @@
 
 //! PyO3 binding — the `ironnest` abi3-py313 wheel (`import ironnest`).
 //!
-//! A single [`nest`] `#[pyfunction]` wrapping [`ironnest_core::nest`]. Polygons marshal as plain
+//! Two `#[pyfunction]`s — [`nest`] (one container) and [`nest_multi`] (spill across sheets) —
+//! wrapping [`ironnest_core::nest`] / [`ironnest_core::nest_multi`]. Polygons marshal as plain
 //! `list[list[tuple[float, float]]]` (PyO3 `Vec<Vec<[f64; 2]>>`) — **no numpy, no JSON wire** (the
 //! JSON wire is exactly the float-drift class that killed the old CLI stub). Python `float` *is* IEEE
 //! f64, so the marshalling is exact and introduces no nondeterminism: the wheel inherits the engine's
@@ -64,8 +65,9 @@ type PySheet = (Vec<[f64; 2]>, Vec<Vec<[f64; 2]>>);
 #[pyfunction]
 #[pyo3(signature = (items, qty, container, holes, min_sep, rotations, seed, budget))]
 #[allow(clippy::needless_pass_by_value)] // PyO3 marshals owned Vecs out of the Python objects
-#[allow(clippy::too_many_arguments)] // the oracle's full input surface; mirrors the Rust API
+#[allow(clippy::too_many_arguments)] // injected `py` GIL token + the oracle's input surface (mirrors the Rust API)
 fn nest(
+    py: Python<'_>,
     items: Vec<Vec<[f64; 2]>>,
     qty: Vec<usize>,
     container: Vec<[f64; 2]>,
@@ -83,9 +85,18 @@ fn nest(
         )));
     }
 
-    let solution = nest_impl(
-        &items, &qty, &container, &holes, min_sep, &rotations, seed, budget,
-    );
+    // Release the GIL for the (synchronous, potentially long) solve so the caller's other Python
+    // threads keep running — without this a worker-thread nest freezes the whole interpreter: the
+    // asyncio event loop stalls ("connection lost") and SIGINT/Ctrl+C handling dies. Every input is
+    // an owned, `Send` Rust `Vec` and the returned `Solution` is plain data, so the closure is
+    // `Ungil` and this is the textbook PyO3 release pattern. It does NOT touch the determinism
+    // contract: no threads run *inside* the solve (single canonical worker, CLAUDE.md), so output
+    // stays byte-identical.
+    let solution = py.detach(|| {
+        nest_impl(
+            &items, &qty, &container, &holes, min_sep, &rotations, seed, budget,
+        )
+    });
 
     let placements = solution
         .placements
@@ -116,7 +127,9 @@ fn nest(
 #[pyfunction]
 #[pyo3(signature = (items, qty, sheets, min_sep, rotations, seed, budget))]
 #[allow(clippy::needless_pass_by_value)]
+#[allow(clippy::too_many_arguments)] // `py` is the injected GIL token (not an oracle input); the rest are the oracle's input surface
 fn nest_multi(
+    py: Python<'_>,
     items: Vec<Vec<[f64; 2]>>,
     qty: Vec<usize>,
     sheets: Vec<PySheet>,
@@ -138,7 +151,9 @@ fn nest_multi(
         .map(|(outline, holes)| Sheet { outline, holes })
         .collect();
 
-    let solution = nest_multi_impl(&items, &qty, &sheets, min_sep, &rotations, seed, budget);
+    // Release the GIL for the solve — see the note in `nest` for the why and the safety argument.
+    let solution =
+        py.detach(|| nest_multi_impl(&items, &qty, &sheets, min_sep, &rotations, seed, budget));
 
     let per_sheet = solution
         .per_sheet

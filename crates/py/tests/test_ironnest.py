@@ -9,6 +9,10 @@ byte-identity is proven by the Rust golden (Phase 3); these tests prove the whee
 correctly and that the Python marshalling preserves determinism (Python `float` is IEEE f64, so
 `==` on the returned tuples is an exact bit comparison)."""
 
+import os
+import threading
+import time
+
 import pytest
 
 import ironnest
@@ -86,3 +90,58 @@ def test_nest_multi_spills_and_is_deterministic():
 def test_length_mismatch_raises_value_error():
     with pytest.raises(ValueError):
         ironnest.nest([_rect(1.0, 1.0)], [1, 2], _rect(10.0, 10.0), [], 0.0, CARDINAL, 1, 100)
+
+
+# A solve heavy enough (~tens of ms) that thread-start and argument-marshalling overhead is noise.
+_TRI = [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]
+_GIL_ARGS = ([_TRI, _rect(7.0, 3.0), _rect(4.0, 4.0)], [8, 8, 8], _rect(40.0, 40.0), [], 0.25, CARDINAL, 42, 20000)
+
+
+def _time_single():
+    t0 = time.perf_counter()
+    ironnest.nest(*_GIL_ARGS)
+    return time.perf_counter() - t0
+
+
+def _time_concurrent(n):
+    threads = [threading.Thread(target=lambda: ironnest.nest(*_GIL_ARGS)) for _ in range(n)]
+    t0 = time.perf_counter()
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    return time.perf_counter() - t0
+
+
+def _median(samples):
+    return sorted(samples)[len(samples) // 2]
+
+
+@pytest.mark.skipif((os.cpu_count() or 1) < 2, reason="needs ≥2 cores to observe parallelism")
+def test_nest_releases_the_gil():
+    """The solve must run with the GIL released so a worker-thread nest does not freeze the whole
+    interpreter — the failure mode that stalled the consumer's asyncio event loop ("connection
+    lost") and killed Ctrl+C. We prove the release indirectly but robustly: N identical solves on
+    N threads run in *parallel* (true Rust threads, no GIL) instead of serializing, so the
+    concurrent wall-clock stays well under N× a single solve. Were the GIL held for the whole C
+    call (the bug), the N solves would serialize and the ratio would approach N.
+
+    This is a coarse, self-calibrating check (a ratio measured on the same machine) — not a
+    determinism assertion. Output byte-identity is covered by the Rust golden and the determinism
+    tests above; releasing the GIL changes scheduling, never results. To stay non-flaky on shared
+    CI runners it warms up first (discards the cache-cold solve) and takes the median of 3 samples,
+    so a single GC pause or co-tenant burst cannot trip it; the 3× gate sits equidistant between
+    the worst real parallel case (~2× on a 2-core box) and the serial bug (~n×), so it still fails
+    a regression that re-acquires the GIL for the solve."""
+    _time_single()  # warm up: discard the cache-cold first solve so the timings below are stable
+
+    n = 4
+    single = _median([_time_single() for _ in range(3)])
+    concurrent = _median([_time_concurrent(n) for _ in range(3)])
+    assert single > 0.002, f"baseline solve implausibly fast ({single * 1e3:.1f} ms) — test miscalibrated"
+
+    ratio = concurrent / single
+    assert ratio < 3.0, (
+        f"{n} concurrent solves took {concurrent * 1e3:.0f} ms vs {single * 1e3:.0f} ms for one "
+        f"(ratio {ratio:.2f}×; fully serial would be ~{n}×) — the GIL appears not to be released"
+    )
