@@ -23,8 +23,8 @@
     "deny": [
       "Bash(rm -rf /:*)",
       "Bash(rm -rf ~:*)",
-      "Bash(curl:* | sh)",
-      "Bash(curl:* | bash)"
+      "Bash(curl* | sh)",
+      "Bash(curl* | bash)"
     ]
   },
   "env": {
