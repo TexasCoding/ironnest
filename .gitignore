@@ -1,0 +1,27 @@
+# Rust
+/target
+**/target
+**/*.rs.bk
+*.pdb
+
+# NOTE: Cargo.lock IS committed (determinism/audit requirement — the wheel the shop
+# installs must correspond to an auditable, pinned dependency graph). Do not ignore it.
+
+# Python / maturin / PyO3
+*.so
+*.pyd
+*.dylib
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.maturin/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
