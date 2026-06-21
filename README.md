@@ -46,6 +46,10 @@ placements, unplaced = ironnest.nest(
 - **`holes`** are interior keep-out polygons on the sheet — nest *around* voids, or *inside* a part.
 - **`nest_multi(items, qty, sheets, min_sep, rotations, seed, budget)`** packs across several sheets
   in order, spilling leftover demand to the next; each sheet is an `(outline, holes)` pair.
+- **`rotations`** accepts either a single `list[float]` applied to every part (above) **or** a
+  `list[list[float]]` with one allowed-orientation set *per part type* (`len(rotations) == len(items)`)
+  — e.g. rectangles pinned to `[0, 90]` while triangles interlock on `[0, 45, …, 315]`. Per-item sets
+  are equally byte-identical across platforms (the cross-platform golden covers a per-item case).
 
 ## Why it exists
 

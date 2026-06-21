@@ -6,7 +6,7 @@
 //! interior-void holes, multi-sheet, and the in-process determinism golden (same inputs →
 //! byte-identical placements).
 
-use ironnest_optimizer::{Scalar, Sheet, nest, nest_multi};
+use ironnest_optimizer::{Scalar, Sheet, nest, nest_multi, nest_multi_per_item, nest_per_item};
 
 /// An axis-aligned `w × h` rectangle with its lower-left corner at the origin (CCW).
 fn rect(w: Scalar, h: Scalar) -> Vec<[Scalar; 2]> {
@@ -81,6 +81,132 @@ fn determinism_same_seed_is_byte_identical() {
         "same inputs + seed must produce byte-identical placements"
     );
     assert!(!a.placements.is_empty());
+}
+
+#[test]
+fn per_item_rotations_are_respected_per_type() {
+    // Two part types with DIFFERENT allowed sets in one nest: a square pinned axis-aligned ({0,90})
+    // and a right triangle free on a fine 45° step. Every placement's rotation must come from THAT
+    // item's set — the square must never appear at 45/135/…, the triangle may.
+    let square = rect(10.0, 10.0);
+    let tri = vec![[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]];
+    let items = vec![square, tri];
+    let square_set = [0.0, 90.0];
+    let tri_set = [0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0];
+    let rotations = vec![square_set.to_vec(), tri_set.to_vec()];
+
+    let sol = nest_per_item(
+        &items,
+        &[4, 6],
+        &rect(40.0, 40.0),
+        &[],
+        0.0,
+        &rotations,
+        11,
+        1500,
+    );
+
+    let in_set = |deg: Scalar, set: &[Scalar]| set.iter().any(|&r| (deg - r).abs() < 1e-9);
+    for p in &sol.placements {
+        let set: &[Scalar] = if p.item == 0 { &square_set } else { &tri_set };
+        assert!(
+            in_set(p.rotation_deg, set),
+            "item {} placed at {}°, not in its allowed set {:?}",
+            p.item,
+            p.rotation_deg,
+            set
+        );
+    }
+    // The square's set has no 45°-family angle, so no item-0 placement may use one.
+    for p in sol.placements.iter().filter(|p| p.item == 0) {
+        assert!(
+            in_set(p.rotation_deg, &square_set),
+            "axis-aligned square leaked a non-{{0,90}} rotation: {}°",
+            p.rotation_deg
+        );
+    }
+}
+
+#[test]
+fn per_item_rotations_are_deterministic() {
+    let items = vec![rect(10.0, 10.0), vec![[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]]];
+    let rotations = vec![
+        vec![0.0, 90.0],
+        vec![0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0],
+    ];
+    let a = nest_per_item(
+        &items,
+        &[4, 6],
+        &rect(40.0, 40.0),
+        &[],
+        0.0,
+        &rotations,
+        11,
+        1500,
+    );
+    let b = nest_per_item(
+        &items,
+        &[4, 6],
+        &rect(40.0, 40.0),
+        &[],
+        0.0,
+        &rotations,
+        11,
+        1500,
+    );
+    assert_eq!(
+        a, b,
+        "the per-item path must be byte-identical for the same seed"
+    );
+    assert!(!a.placements.is_empty());
+}
+
+#[test]
+fn per_item_broadcast_equals_uniform() {
+    // `nest_per_item` with the SAME set repeated for every item must be byte-identical to the uniform
+    // `nest` — this is the invariant that keeps the existing determinism golden valid through the
+    // per-item refactor. Same for the multi-sheet pair.
+    let items = vec![rect(10.0, 10.0), rect(20.0, 5.0)];
+    let qty = [8, 4];
+    let container = rect(100.0, 100.0);
+    let broadcast = vec![CARDINAL.to_vec(), CARDINAL.to_vec()];
+
+    let uniform = nest(&items, &qty, &container, &[], 1.0, &CARDINAL, 12345, 2000);
+    let per_item = nest_per_item(&items, &qty, &container, &[], 1.0, &broadcast, 12345, 2000);
+    assert_eq!(
+        uniform, per_item,
+        "broadcast per-item must equal the uniform nest"
+    );
+
+    let sheets = vec![Sheet {
+        outline: container.clone(),
+        holes: vec![],
+    }];
+    let m_uniform = nest_multi(&items, &qty, &sheets, 1.0, &CARDINAL, 12345, 2000);
+    let m_per_item = nest_multi_per_item(&items, &qty, &sheets, 1.0, &broadcast, 12345, 2000);
+    assert_eq!(
+        m_uniform, m_per_item,
+        "broadcast per-item must equal the uniform nest_multi"
+    );
+}
+
+#[test]
+#[should_panic(expected = "per-item rotations must be the same length")]
+fn per_item_rotations_length_mismatch_panics() {
+    // Two items but only one rotation set ⇒ a hard precondition violation (the PyO3 layer turns this
+    // into a ValueError before it reaches here; the Rust API asserts).
+    let items = vec![rect(10.0, 10.0), rect(5.0, 5.0)];
+    let rotations = vec![CARDINAL.to_vec()];
+    let _ = nest_per_item(
+        &items,
+        &[1, 1],
+        &rect(40.0, 40.0),
+        &[],
+        0.0,
+        &rotations,
+        1,
+        500,
+    );
 }
 
 #[test]

@@ -223,7 +223,7 @@ fn import_container_with_holes(
 }
 
 /// Nests `items` (each with a demand `qty`) into a single irregular `container` with optional
-/// `holes` (keep-out zones the parts must avoid).
+/// `holes` (keep-out zones the parts must avoid), applying **one** allowed-rotation set to every item.
 ///
 /// * `items` — one outline per item *type*, in item-local coordinates.
 /// * `qty` — demand per item type (`qty.len() == items.len()`).
@@ -232,8 +232,9 @@ fn import_container_with_holes(
 ///   sheet defects, or — to "nest inside a part" — the solid region of an already-placed part,
 ///   leaving its void nestable). Empty ⇒ no holes. Imported as quality-0 zones.
 /// * `min_sep` — minimum separation between any two parts (and part↔boundary↔hole); `0.0` to disable.
-/// * `rotations_deg` — allowed discrete orientations in degrees (e.g. `[0.0, 90.0, 180.0, 270.0]`);
-///   empty ⇒ no rotation.
+/// * `rotations_deg` — allowed discrete orientations in degrees (e.g. `[0.0, 90.0, 180.0, 270.0]`),
+///   applied to **every** item; empty ⇒ no rotation. For a distinct set per item type use
+///   [`nest_per_item`].
 /// * `seed` — explicit PRNG seed (no implicit/entropy fallback, ever).
 /// * `budget` — samples per item placement (fixed; never a wall clock).
 ///
@@ -250,10 +251,50 @@ pub fn nest(
     seed: u64,
     budget: u64,
 ) -> NestSolution {
+    // Broadcast the single rotation set to every item, then run the per-item path. Broadcasting is
+    // byte-for-byte identical to threading one global set through the search — every item sees the
+    // same orientations and so consumes the same PRNG draws — which is what keeps the existing
+    // determinism golden valid through this refactor.
+    let rotations_per_item = vec![rotations_deg.to_vec(); items.len()];
+    nest_per_item(
+        items,
+        qty,
+        container,
+        holes,
+        min_sep,
+        &rotations_per_item,
+        seed,
+        budget,
+    )
+}
+
+/// Like [`nest`], but with a **distinct allowed-rotation set per item type**: `rotations_deg[k]` is
+/// the orientation set (degrees) for `items[k]`, so `rotations_deg.len() == items.len()`. An empty
+/// inner set ⇒ that part is not rotated (the same `{0}` normalization [`nest`] applies, now per item).
+/// Lets different shapes use different orientations in one nest — e.g. rectangles pinned axis-aligned
+/// (`[0.0, 90.0]`), triangles free to interlock (`[0, 45, …, 315]`). Same determinism contract as
+/// [`nest`]; arbitrary (non-cardinal) angles route through the same `libm` trig and stay byte-stable.
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn nest_per_item(
+    items: &[Vec<[Scalar; 2]>],
+    qty: &[usize],
+    container: &[[Scalar; 2]],
+    holes: &[Vec<[Scalar; 2]>],
+    min_sep: Scalar,
+    rotations_deg: &[Vec<Scalar>],
+    seed: u64,
+    budget: u64,
+) -> NestSolution {
     assert_eq!(
         items.len(),
         qty.len(),
         "items and qty must be the same length"
+    );
+    assert_eq!(
+        items.len(),
+        rotations_deg.len(),
+        "items and per-item rotations must be the same length"
     );
 
     let cde_config = default_cde_config();
@@ -267,13 +308,17 @@ pub fn nest(
     importer.shape_modify_config.collision_decimation =
         (min_sep > 0.0).then_some(min_sep * DECIMATION_TOL_FRACTION);
 
-    // Rotations: degrees for the importer's metadata, radians for our sampler. Empty ⇒ {0}.
-    let rotations_deg_vec: Vec<Scalar> = if rotations_deg.is_empty() {
-        vec![0.0]
-    } else {
-        rotations_deg.to_vec()
-    };
-    let rotations_rad: Vec<Scalar> = rotations_deg_vec.iter().map(|d| d.to_radians()).collect();
+    // Per-item rotations: degrees for the importer's metadata, radians for our sampler. An empty set
+    // for an item ⇒ `{0}` (no rotation) — the same normalization the single-set path applies, now
+    // applied independently per item type.
+    let rotations_deg_per_item: Vec<Vec<Scalar>> = rotations_deg
+        .iter()
+        .map(|r| if r.is_empty() { vec![0.0] } else { r.clone() })
+        .collect();
+    let rotations_rad_per_item: Vec<Vec<Scalar>> = rotations_deg_per_item
+        .iter()
+        .map(|r| r.iter().map(|d| d.to_radians()).collect())
+        .collect();
 
     // Import the container (with its holes as quality-0 keep-out zones). A malformed container or
     // hole ⇒ nothing can be placed (conservative — never silently place into an intended keep-out).
@@ -287,12 +332,13 @@ pub fn nest(
     // Import items. A malformed item ⇒ that whole type is unplaced. High-vertex curved parts get
     // their collision footprint decimated by the importer's `collision_decimation` (gated per-shape in
     // `convert_to_internal`); `shape_orig` — which drives the reported placement frame — is always the
-    // untouched original outline.
+    // untouched original outline. Each item carries its own `allowed_orientations`, so the separation
+    // search (which reads `item.allowed_rotation`) honours the per-item set automatically.
     let mut entities: Vec<Option<Item>> = Vec::with_capacity(items.len());
     for (i, outline) in items.iter().enumerate() {
         let ext_item = ExtItem {
             id: i as u64,
-            allowed_orientations: Some(rotations_deg_vec.clone()),
+            allowed_orientations: Some(rotations_deg_per_item[i].clone()),
             shape: ExtShape::SimplePolygon(ext_spolygon(outline)),
             min_quality: None,
         };
@@ -319,7 +365,7 @@ pub fn nest(
         &entities,
         &order,
         qty,
-        &rotations_rad,
+        &rotations_rad_per_item,
         &mut prng,
         budget,
         &mut placed_per_type,
@@ -332,7 +378,7 @@ pub fn nest(
         &entities,
         &order,
         qty,
-        &rotations_rad,
+        &rotations_rad_per_item,
         &mut prng,
         budget,
         IMPROVE_ROUNDS,
@@ -368,7 +414,8 @@ pub fn nest(
 
 /// Nests `items` (demand `qty`) across several `sheets` in order: each sheet is filled with whatever
 /// demand remains, then the rest spills to the next. Returns the placements per sheet plus the global
-/// unplaced.
+/// unplaced. Applies **one** allowed-rotation set to every item; for a distinct set per item type use
+/// [`nest_multi_per_item`].
 ///
 /// Determinism: each sheet is nested with a seed derived deterministically from `seed` and the sheet
 /// index, so the whole result is byte-identical for the same arguments. `min_sep`, `rotations_deg`,
@@ -384,10 +431,43 @@ pub fn nest_multi(
     seed: u64,
     budget: u64,
 ) -> MultiSheetSolution {
+    // Broadcast the single rotation set to every item, then run the per-item path (byte-identical —
+    // see [`nest`]).
+    let rotations_per_item = vec![rotations_deg.to_vec(); items.len()];
+    nest_multi_per_item(
+        items,
+        qty,
+        sheets,
+        min_sep,
+        &rotations_per_item,
+        seed,
+        budget,
+    )
+}
+
+/// Like [`nest_multi`], but with a **distinct allowed-rotation set per item type** — `rotations_deg[k]`
+/// applies to `items[k]` (`rotations_deg.len() == items.len()`). Carries the per-item semantics of
+/// [`nest_per_item`] across the multi-sheet spill. Same determinism contract as [`nest_multi`].
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn nest_multi_per_item(
+    items: &[Vec<[Scalar; 2]>],
+    qty: &[usize],
+    sheets: &[Sheet],
+    min_sep: Scalar,
+    rotations_deg: &[Vec<Scalar>],
+    seed: u64,
+    budget: u64,
+) -> MultiSheetSolution {
     assert_eq!(
         items.len(),
         qty.len(),
         "items and qty must be the same length"
+    );
+    assert_eq!(
+        items.len(),
+        rotations_deg.len(),
+        "items and per-item rotations must be the same length"
     );
 
     let mut remaining = qty.to_vec();
@@ -397,7 +477,7 @@ pub fn nest_multi(
         // A distinct, deterministic per-sheet seed (SplitMix64 in the PRNG de-correlates adjacent
         // seeds, so `seed + i` gives well-separated streams).
         let sheet_seed = seed.wrapping_add(i as u64);
-        let sol = nest(
+        let sol = nest_per_item(
             items,
             &remaining,
             &sheet.outline,
@@ -435,13 +515,14 @@ pub fn nest_multi(
 }
 
 /// Greedily places every requested instance (largest-first) at its lowest-loss feasible pose.
+/// `rotations_rad` is indexed by item id, so each type samples from its own orientation set.
 #[allow(clippy::too_many_arguments)]
 fn constructive_fill(
     layout: &mut Layout,
     entities: &[Option<Item>],
     order: &[usize],
     qty: &[usize],
-    rotations_rad: &[Scalar],
+    rotations_rad: &[Vec<Scalar>],
     prng: &mut Prng,
     budget: u64,
     placed_per_type: &mut [usize],
@@ -449,7 +530,7 @@ fn constructive_fill(
     for &item_id in order {
         let item = entities[item_id].as_ref().unwrap();
         while placed_per_type[item_id] < qty[item_id] {
-            match search::search(layout.cde(), item, rotations_rad, prng, budget) {
+            match search::search(layout.cde(), item, &rotations_rad[item_id], prng, budget) {
                 Some(d_transf) => {
                     improve::place_dropped(layout, item, d_transf);
                     placed_per_type[item_id] += 1;

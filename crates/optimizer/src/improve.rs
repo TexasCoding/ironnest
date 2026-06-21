@@ -32,13 +32,14 @@ const BSEARCH_ITERS: u32 = 30;
 const CONVERGE_EPS: Scalar = 1e-6;
 
 /// Runs `rounds` of compaction-then-fill over `layout`, updating `placed_per_type`.
+/// `rotations_rad` is indexed by item id (each type fills from its own orientation set).
 #[allow(clippy::too_many_arguments)]
 pub fn improve(
     layout: &mut Layout,
     entities: &[Option<Item>],
     order: &[usize],
     qty: &[usize],
-    rotations_rad: &[Scalar],
+    rotations_rad: &[Vec<Scalar>],
     prng: &mut Prng,
     budget: u64,
     rounds: u32,
@@ -142,13 +143,14 @@ fn drop_coord(
 }
 
 /// Tries to place every still-unplaced instance (largest-first) in whatever space is now free.
+/// `rotations_rad` is indexed by item id (each type samples from its own orientation set).
 #[allow(clippy::too_many_arguments)]
 fn fill_unplaced(
     layout: &mut Layout,
     entities: &[Option<Item>],
     order: &[usize],
     qty: &[usize],
-    rotations_rad: &[Scalar],
+    rotations_rad: &[Vec<Scalar>],
     prng: &mut Prng,
     budget: u64,
     placed_per_type: &mut [usize],
@@ -158,7 +160,7 @@ fn fill_unplaced(
             continue;
         };
         while placed_per_type[item_id] < qty[item_id] {
-            match search(layout.cde(), item, rotations_rad, prng, budget) {
+            match search(layout.cde(), item, &rotations_rad[item_id], prng, budget) {
                 Some(transf) => {
                     place_dropped(layout, item, transf);
                     placed_per_type[item_id] += 1;

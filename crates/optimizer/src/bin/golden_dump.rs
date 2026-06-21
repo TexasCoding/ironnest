@@ -22,7 +22,7 @@
 //! - The placement emit order is `nest`'s own order (slotmap slot order — a pure function of the
 //!   deterministic op history); it is part of the contract, so it is dumped unsorted.
 
-use ironnest_optimizer::{Placement, Scalar, nest};
+use ironnest_optimizer::{Placement, Scalar, nest, nest_per_item};
 use std::fmt::Write as _;
 
 /// `w × h` axis-aligned rectangle, lower-left at the origin (CCW).
@@ -54,6 +54,13 @@ fn circle_64(r: Scalar) -> Vec<[Scalar; 2]> {
 
 const CARDINAL: [Scalar; 4] = [0.0, 90.0, 180.0, 270.0];
 
+/// A case's allowed rotations: either one set for every item (the [`nest`] path) or a distinct set
+/// per item type (the [`nest_per_item`] path). Both are exercised by the cross-platform golden.
+enum Rotations {
+    Uniform(Vec<Scalar>),
+    PerItem(Vec<Vec<Scalar>>),
+}
+
 /// One golden case. Everything here is fixed — seeds, budgets, geometry — so the output is a pure
 /// function of the engine.
 struct Case {
@@ -63,7 +70,7 @@ struct Case {
     container: Vec<[Scalar; 2]>,
     holes: Vec<Vec<[Scalar; 2]>>,
     min_sep: Scalar,
-    rotations: Vec<Scalar>,
+    rotations: Rotations,
     seed: u64,
     budget: u64,
 }
@@ -88,7 +95,7 @@ fn corpus() -> Vec<Case> {
             container: rect(60.0, 60.0),
             holes: vec![],
             min_sep: 0.0,
-            rotations: CARDINAL.to_vec(),
+            rotations: Rotations::Uniform(CARDINAL.to_vec()),
             seed: 7,
             budget: 1500,
         },
@@ -100,7 +107,7 @@ fn corpus() -> Vec<Case> {
             container: rect(50.0, 50.0),
             holes: vec![],
             min_sep: 0.0,
-            rotations: vec![],
+            rotations: Rotations::Uniform(vec![]),
             seed: 1,
             budget: 800,
         },
@@ -112,7 +119,7 @@ fn corpus() -> Vec<Case> {
             container: rect(11.0, 11.0),
             holes: vec![],
             min_sep: 0.0,
-            rotations: CARDINAL.to_vec(),
+            rotations: Rotations::Uniform(CARDINAL.to_vec()),
             seed: 42,
             budget: 2000,
         },
@@ -124,7 +131,7 @@ fn corpus() -> Vec<Case> {
             container: rect(80.0, 80.0),
             holes: vec![],
             min_sep: 0.0,
-            rotations: CARDINAL.to_vec(),
+            rotations: Rotations::Uniform(CARDINAL.to_vec()),
             seed: 3,
             budget: 2000,
         },
@@ -138,7 +145,7 @@ fn corpus() -> Vec<Case> {
             container: rect(60.0, 60.0),
             holes: vec![center_hole],
             min_sep: 0.0,
-            rotations: CARDINAL.to_vec(),
+            rotations: Rotations::Uniform(CARDINAL.to_vec()),
             seed: 5,
             budget: 1000,
         },
@@ -152,7 +159,7 @@ fn corpus() -> Vec<Case> {
             container: rect(60.0, 60.0),
             holes: vec![],
             min_sep: 4.0,
-            rotations: CARDINAL.to_vec(),
+            rotations: Rotations::Uniform(CARDINAL.to_vec()),
             seed: 8,
             budget: 1000,
         },
@@ -168,7 +175,7 @@ fn corpus() -> Vec<Case> {
             container: rect(60.0, 60.0),
             holes: vec![],
             min_sep: 1.0,
-            rotations: CARDINAL.to_vec(),
+            rotations: Rotations::Uniform(CARDINAL.to_vec()),
             seed: 8,
             budget: 1000,
         },
@@ -182,9 +189,29 @@ fn corpus() -> Vec<Case> {
             container: circle_64(30.0),
             holes: vec![],
             min_sep: 1.0,
-            rotations: CARDINAL.to_vec(),
+            rotations: Rotations::Uniform(CARDINAL.to_vec()),
             seed: 4,
             budget: 1000,
+        },
+        // Per-item rotation sets (the `nest_per_item` path): two part types with DIFFERENT allowed
+        // orientations in ONE nest — the square pinned axis-aligned (`{0, 90}`), the right triangle
+        // free to interlock on a fine 45° step (`{0, 45, …, 315}`). The non-cardinal angles route
+        // through the SAME `libm::sincos` as the cardinal path (Transformation::from_rotation), so this
+        // layout is byte-identical cross-platform too — the standing proof that per-item rotation sets
+        // (and arbitrary non-cardinal angles) preserve the determinism contract.
+        Case {
+            name: "per-item-rotations",
+            items: vec![rect(10.0, 10.0), vec![[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]]],
+            qty: vec![4, 6],
+            container: rect(40.0, 40.0),
+            holes: vec![],
+            min_sep: 0.0,
+            rotations: Rotations::PerItem(vec![
+                vec![0.0, 90.0],
+                vec![0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0],
+            ]),
+            seed: 11,
+            budget: 1500,
         },
     ]
 }
@@ -195,16 +222,28 @@ fn dump() -> String {
     let mut out = String::new();
     for case in corpus() {
         writeln!(out, "# {}", case.name).unwrap();
-        let sol = nest(
-            &case.items,
-            &case.qty,
-            &case.container,
-            &case.holes,
-            case.min_sep,
-            &case.rotations,
-            case.seed,
-            case.budget,
-        );
+        let sol = match &case.rotations {
+            Rotations::Uniform(r) => nest(
+                &case.items,
+                &case.qty,
+                &case.container,
+                &case.holes,
+                case.min_sep,
+                r,
+                case.seed,
+                case.budget,
+            ),
+            Rotations::PerItem(r) => nest_per_item(
+                &case.items,
+                &case.qty,
+                &case.container,
+                &case.holes,
+                case.min_sep,
+                r,
+                case.seed,
+                case.budget,
+            ),
+        };
         for Placement {
             item,
             x,

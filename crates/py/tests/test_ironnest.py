@@ -93,6 +93,102 @@ def test_length_mismatch_raises_value_error():
         ironnest.nest([_rect(1.0, 1.0)], [1, 2], _rect(10.0, 10.0), [], 0.0, CARDINAL, 1, 100)
 
 
+# --- Per-item allowed-rotation sets (rotations as list[list[float]]) ----------------------------
+
+_TRI8 = [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]
+_SQUARE_SET = [0.0, 90.0]
+_TRI_SET = [0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0]
+
+
+def test_per_item_rotations_are_respected_per_type():
+    # A square pinned axis-aligned ({0,90}) and a right triangle free on a fine 45° step, in ONE nest.
+    # Every placement's rotation must come from THAT item's own set.
+    items = [_rect(10.0, 10.0), _TRI8]
+    placements, unplaced = ironnest.nest(
+        items, [4, 6], _rect(40.0, 40.0), [], 0.0, [_SQUARE_SET, _TRI_SET], 11, 1500
+    )
+    assert unplaced == []
+
+    def _in_set(deg, s):
+        return any(abs(deg - r) < 1e-9 for r in s)
+
+    for item, _x, _y, rot in placements:
+        allowed = _SQUARE_SET if item == 0 else _TRI_SET
+        assert _in_set(rot, allowed), f"item {item} placed at {rot}°, not in {allowed}"
+    # The square's set has no 45°-family angle, so item 0 may never use one.
+    assert all(_in_set(rot, _SQUARE_SET) for it, _x, _y, rot in placements if it == 0)
+
+
+def test_per_item_rotations_are_deterministic():
+    items = [_rect(10.0, 10.0), _TRI8]
+    args = (items, [4, 6], _rect(40.0, 40.0), [], 0.0, [_SQUARE_SET, _TRI_SET], 11, 1500)
+    assert ironnest.nest(*args) == ironnest.nest(*args)
+
+
+def test_per_item_broadcast_equals_uniform():
+    # The same set repeated per item must be byte-identical to the uniform flat-list form — the
+    # invariant that keeps the cross-platform golden valid across the per-item refactor.
+    items = [_rect(10.0, 10.0), _rect(20.0, 5.0)]
+    uniform = ironnest.nest(items, [6, 4], _rect(60.0, 60.0), [], 0.0, CARDINAL, 7, 1500)
+    per_item = ironnest.nest(items, [6, 4], _rect(60.0, 60.0), [], 0.0, [CARDINAL, CARDINAL], 7, 1500)
+    assert uniform == per_item
+
+    sheets = [(_rect(60.0, 60.0), [])]
+    m_uniform = ironnest.nest_multi(items, [6, 4], sheets, 0.0, CARDINAL, 7, 1500)
+    m_per_item = ironnest.nest_multi(items, [6, 4], sheets, 0.0, [CARDINAL, CARDINAL], 7, 1500)
+    assert m_uniform == m_per_item
+
+
+def test_single_item_disambiguation_is_by_type_not_length():
+    # For a 1-item nest, [0.0] is the uniform form and [[0.0]] is the per-item form; both mean "no
+    # rotation" here, so they must agree — proving the parser disambiguates by element TYPE, not length.
+    items = [_rect(10.0, 10.0)]
+    uniform = ironnest.nest(items, [4], _rect(40.0, 40.0), [], 0.0, [0.0], 3, 800)
+    per_item = ironnest.nest(items, [4], _rect(40.0, 40.0), [], 0.0, [[0.0]], 3, 800)
+    assert uniform == per_item
+    assert all(rot == 0.0 for _it, _x, _y, rot in uniform[0])
+
+
+def test_empty_rotations_means_no_rotation():
+    placements, _ = ironnest.nest([_rect(10.0, 10.0)], [4], _rect(40.0, 40.0), [], 0.0, [], 1, 800)
+    assert placements and all(rot == 0.0 for _it, _x, _y, rot in placements)
+
+
+def test_int_angles_are_accepted_and_match_floats():
+    items = [_rect(10.0, 10.0), _TRI8]
+    as_floats = ironnest.nest(items, [4, 6], _rect(40.0, 40.0), [], 0.0, [_SQUARE_SET, _TRI_SET], 11, 1500)
+    as_ints = ironnest.nest(
+        items, [4, 6], _rect(40.0, 40.0), [], 0.0, [[0, 90], [0, 45, 90, 135, 180, 225, 270, 315]], 11, 1500
+    )
+    assert as_floats == as_ints
+
+
+# Each entry is a `rotations` value that the parser must reject with ValueError. Two item types.
+_BAD_ROTATIONS = [
+    pytest.param([_SQUARE_SET], id="per-item-length-mismatch"),
+    pytest.param([_SQUARE_SET, []], id="empty-inner-set"),
+    pytest.param([0.0, float("nan")], id="nan-uniform"),
+    pytest.param([_SQUARE_SET, [0.0, float("inf")]], id="inf-per-item"),
+    pytest.param([0.0, "x"], id="non-numeric-uniform"),
+    pytest.param("90", id="bare-string"),
+]
+
+
+@pytest.mark.parametrize("rotations", _BAD_ROTATIONS)
+def test_invalid_rotations_raise_value_error(rotations):
+    items = [_rect(10.0, 10.0), _TRI8]
+    with pytest.raises(ValueError):
+        ironnest.nest(items, [4, 6], _rect(40.0, 40.0), [], 0.0, rotations, 11, 500)
+
+
+@pytest.mark.parametrize("rotations", _BAD_ROTATIONS)
+def test_invalid_rotations_raise_value_error_in_nest_multi(rotations):
+    items = [_rect(10.0, 10.0), _TRI8]
+    sheets = [(_rect(40.0, 40.0), [])]
+    with pytest.raises(ValueError):
+        ironnest.nest_multi(items, [4, 6], sheets, 0.0, rotations, 11, 500)
+
+
 # A solve heavy enough (~tens of ms) that thread-start and argument-marshalling overhead is noise.
 _TRI = [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]
 _GIL_ARGS = ([_TRI, _rect(7.0, 3.0), _rect(4.0, 4.0)], [8, 8, 8], _rect(40.0, 40.0), [], 0.25, CARDINAL, 42, 20000)
