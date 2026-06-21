@@ -283,8 +283,8 @@ is the spike's jagua number.
 ## 10. Phased roadmap
 
 - **Phase 0 — Spike** (§9): density + x-platform determinism proofs. *(source verify ✅; density
-  proof ✅ via Phase 2 — 92–99 % rectangular, 79 % irregular; x-platform determinism harness ✅ wired
-  in Phase 3 — the cross-platform CI golden is the standing proof, green on its first push.)*
+  proof ✅ via Phase 2 — 92–99 % rectangular, 79 % irregular; x-platform determinism ✅ proven in
+  Phase 3 — the cross-platform CI golden ran green on macOS-arm64 + Win-x64 + linux-x64 on first push.)*
 - **Phase 1 — Fork & f64. ✅ DONE (2026-06-20).** Vendored the minimal jagua subset into
   `crates/geo` (geometry + `fpa`) + `crates/cde` (CDE + entities + io + bpp + assertions); flipped
   every `f32`→`Scalar` (=f64); ported with the crate-split done via `pub use ironnest_geo as
@@ -317,8 +317,9 @@ is the spike's jagua number.
   f64) produced by the `golden_dump` bin over a fixed `min_sep=0` corpus, blessed on macOS-arm64; (4)
   the **cross-platform CI golden** — `.github/workflows/ci.yml` runs build + clippy(`-D warnings`) +
   fmt + the golden (debug **and** release) on **macOS-arm64 + Windows-x64 + linux-x64**, so any
-  divergence fails loudly. Verified locally: same-platform debug == release == blessed snapshot; the
-  *cross-platform* pass executes on the first push (can't run Win/Linux on the dev box). `min_sep=0`
+  divergence fails loudly. **Confirmed GREEN on all three runners on the first push** (CI run
+  `27903458878`, 2026-06-21) — byte-identical placements across the fleet, the prime directive proven
+  in CI rather than assumed. (Locally: same-platform debug == release == blessed snapshot.) `min_sep=0`
   keeps the corpus inside the proven-deterministic envelope (the geo-buffer offset, risk #2, is still
   not byte-stable). 37 tests green. (5) the consumer `.CNC` sha256 golden stays `drawing_and_gcode`'s.
 - **Phase 4 — PyO3 wheel + CI.** `crates/py`, maturin + cibuildwheel → PyPI (Win-x64, macOS-arm64,
