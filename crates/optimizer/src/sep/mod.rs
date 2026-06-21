@@ -32,9 +32,9 @@ use search::SampleConfig;
 use separator::SepConfig;
 use tracker::CollisionTracker;
 
-/// The fixed per-insertion separation budget. Matches sparrow's separator defaults (single worker):
-/// 50 container + 25 focused samples, 3 coordinate descents, 100 no-improvement iterations, 3
-/// strikes. All integers — never a wall clock.
+/// The fixed per-insertion separation budget (sparrow's separator defaults, single worker, scaled up
+/// modestly for irregular density — see `docs/02` §10): 80 container + 40 focused samples, 3
+/// coordinate descents, 150 no-improvement iterations, 4 strikes. All integers — never a wall clock.
 const SEP_CONFIG: SepConfig = SepConfig {
     sample: SampleConfig {
         n_container_samples: 80,

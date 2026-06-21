@@ -17,7 +17,9 @@ irregular density pentagon 65→79 %, bricks 87→92 %, discovers interlocks —
 (**determinism harness**: `golden_dump` bin + `insta` golden + `.github/workflows/ci.yml` x-platform
 gate on macOS-arm64/Win-x64/linux) ✅ · Phase 4 (**PyO3 `ironnest` wheel** via `crates/ironnest` façade +
 `crates/py`; abi3-py313, maturin + `wheels.yml`/`supply-chain.yml`; `import ironnest` validated) ✅ ·
-**Next: Phase 5 — consumer integration** (`drawing_and_gcode` #258). See `docs/00` §10.
+Phase 6 (**interior-void holes + multi-sheet**: `nest(holes…)` keep-out zones = "nesting inside parts",
+`nest_multi(sheets…)`; bound in the wheel — `docs/00` §10) ✅ · **Next: Phase 5 — consumer integration**
+(`drawing_and_gcode` #258). See `docs/00` §10.
 
 ## ⛔ Two prime directives
 

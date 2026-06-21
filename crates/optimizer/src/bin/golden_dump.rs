@@ -38,6 +38,7 @@ struct Case {
     items: Vec<Vec<[Scalar; 2]>>,
     qty: Vec<usize>,
     container: Vec<[Scalar; 2]>,
+    holes: Vec<Vec<[Scalar; 2]>>,
     rotations: Vec<Scalar>,
     seed: u64,
     budget: u64,
@@ -52,6 +53,8 @@ fn corpus() -> Vec<Case> {
         [0.0, 20.0],
     ];
     let right_tri = vec![[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]];
+    // A 60×60 sheet with a central 20×20 keep-out hole at (20,20)–(40,40): parts must nest around it.
+    let center_hole = vec![[20.0, 20.0], [40.0, 20.0], [40.0, 40.0], [20.0, 40.0]];
     vec![
         // Construction + compaction over two part types and full cardinal rotation.
         Case {
@@ -59,6 +62,7 @@ fn corpus() -> Vec<Case> {
             items: vec![rect(10.0, 10.0), rect(20.0, 5.0)],
             qty: vec![6, 4],
             container: rect(60.0, 60.0),
+            holes: vec![],
             rotations: CARDINAL.to_vec(),
             seed: 7,
             budget: 1500,
@@ -69,6 +73,7 @@ fn corpus() -> Vec<Case> {
             items: vec![rect(10.0, 10.0)],
             qty: vec![4],
             container: rect(50.0, 50.0),
+            holes: vec![],
             rotations: vec![],
             seed: 1,
             budget: 800,
@@ -79,6 +84,7 @@ fn corpus() -> Vec<Case> {
             items: vec![right_tri],
             qty: vec![2],
             container: rect(11.0, 11.0),
+            holes: vec![],
             rotations: CARDINAL.to_vec(),
             seed: 42,
             budget: 2000,
@@ -89,9 +95,23 @@ fn corpus() -> Vec<Case> {
             items: vec![pentagon],
             qty: vec![10],
             container: rect(80.0, 80.0),
+            holes: vec![],
             rotations: CARDINAL.to_vec(),
             seed: 3,
             budget: 2000,
+        },
+        // Interior-void path: parts must avoid the central keep-out hole (Phase 6). Quantity kept
+        // low so construction places them all (no slow debug separation) — the point is to exercise
+        // the holes path deterministically in the cross-platform golden.
+        Case {
+            name: "sheet-with-hole",
+            items: vec![rect(10.0, 10.0)],
+            qty: vec![12],
+            container: rect(60.0, 60.0),
+            holes: vec![center_hole],
+            rotations: CARDINAL.to_vec(),
+            seed: 5,
+            budget: 1000,
         },
     ]
 }
@@ -106,6 +126,7 @@ fn dump() -> String {
             &case.items,
             &case.qty,
             &case.container,
+            &case.holes,
             0.0, // min_sep = 0 — see the module note (geo-buffer is not yet byte-deterministic)
             &case.rotations,
             case.seed,

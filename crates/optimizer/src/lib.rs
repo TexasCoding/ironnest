@@ -38,9 +38,10 @@ pub use prng::Prng;
 const IMPROVE_ROUNDS: u32 = 3;
 
 use ironnest_cde::collision_detection::CDEConfig;
-use ironnest_cde::entities::{Item, Layout};
+use ironnest_cde::entities::{Container, Item, Layout};
 use ironnest_cde::geometry::fail_fast::SPSurrogateConfig;
-use ironnest_cde::io::ext_repr::{ExtContainer, ExtItem, ExtSPolygon, ExtShape};
+use ironnest_cde::geometry::primitives::Rect;
+use ironnest_cde::io::ext_repr::{ExtContainer, ExtItem, ExtQualityZone, ExtSPolygon, ExtShape};
 use ironnest_cde::io::import::Importer;
 
 /// A single resolved placement — the only thing the oracle emits.
@@ -68,6 +69,24 @@ pub struct NestSolution {
     pub unplaced: Vec<usize>,
 }
 
+/// One sheet for a multi-sheet nest: a boundary outline plus optional keep-out holes.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Sheet {
+    /// The sheet boundary outline.
+    pub outline: Vec<[Scalar; 2]>,
+    /// Keep-out polygons inside the sheet that no part may overlap (see [`nest`]'s `holes`).
+    pub holes: Vec<Vec<[Scalar; 2]>>,
+}
+
+/// The result of a multi-sheet nest: the placements on each sheet (parallel to the input `sheets`),
+/// plus the item-type index of every instance that fit on no sheet.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MultiSheetSolution {
+    /// `per_sheet[i]` are the placements on `sheets[i]`.
+    pub per_sheet: Vec<Vec<Placement>>,
+    pub unplaced: Vec<usize>,
+}
+
 /// The collision-detection configuration. Mirrors `lbf`'s reference defaults; internal for 2a.
 fn default_cde_config() -> CDEConfig {
     CDEConfig {
@@ -85,12 +104,123 @@ fn ext_spolygon(outline: &[[Scalar; 2]]) -> ExtSPolygon {
     ExtSPolygon(outline.iter().map(|p| (p[0], p[1])).collect())
 }
 
-/// Nests `items` (each with a demand `qty`) into a single irregular `container`.
+/// Clips polygon `poly` to the axis-aligned rectangle `r` (Sutherland–Hodgman against the four
+/// half-planes). Returns `None` if the result has fewer than 3 vertices (the polygon lay outside
+/// `r`). Deterministic — only `+ − × ÷` and comparisons; division is reached only on a segment that
+/// straddles an edge (non-parallel), so it never divides by zero. A polygon already inside `r` is
+/// returned vertex-for-vertex unchanged.
+fn clip_polygon_to_rect(poly: &[[Scalar; 2]], r: Rect) -> Option<Vec<[Scalar; 2]>> {
+    // 0=left (x≥x_min), 1=right (x≤x_max), 2=bottom (y≥y_min), 3=top (y≤y_max).
+    let inside = |p: [Scalar; 2], edge: u8| -> bool {
+        match edge {
+            0 => p[0] >= r.x_min,
+            1 => p[0] <= r.x_max,
+            2 => p[1] >= r.y_min,
+            _ => p[1] <= r.y_max,
+        }
+    };
+    let intersect = |a: [Scalar; 2], b: [Scalar; 2], edge: u8| -> [Scalar; 2] {
+        match edge {
+            0 => {
+                let t = (r.x_min - a[0]) / (b[0] - a[0]);
+                [r.x_min, a[1] + t * (b[1] - a[1])]
+            }
+            1 => {
+                let t = (r.x_max - a[0]) / (b[0] - a[0]);
+                [r.x_max, a[1] + t * (b[1] - a[1])]
+            }
+            2 => {
+                let t = (r.y_min - a[1]) / (b[1] - a[1]);
+                [a[0] + t * (b[0] - a[0]), r.y_min]
+            }
+            _ => {
+                let t = (r.y_max - a[1]) / (b[1] - a[1]);
+                [a[0] + t * (b[0] - a[0]), r.y_max]
+            }
+        }
+    };
+
+    let mut out = poly.to_vec();
+    for edge in 0..4u8 {
+        if out.len() < 3 {
+            return None;
+        }
+        let input = std::mem::take(&mut out);
+        let n = input.len();
+        for i in 0..n {
+            let cur = input[i];
+            let prev = input[(i + n - 1) % n];
+            let (cur_in, prev_in) = (inside(cur, edge), inside(prev, edge));
+            if cur_in {
+                if !prev_in {
+                    out.push(intersect(prev, cur, edge));
+                }
+                out.push(cur);
+            } else if prev_in {
+                out.push(intersect(prev, cur, edge));
+            }
+        }
+    }
+    (out.len() >= 3).then_some(out)
+}
+
+/// Imports the container with `holes` as quality-0 keep-out zones, **clipping each hole to the
+/// quadtree root** so an out-of-bounds hole cannot trip the CDE's constrict invariant. Returns `None`
+/// if the container — or any in-bounds hole — is malformed (⇒ the caller places nothing). In-bounds
+/// holes pass through unchanged (so the determinism golden is untouched); an enclosing hole clips to
+/// a full-sheet keep-out (⇒ nothing fits); an entirely-outside hole is dropped (unreachable space).
+fn import_container_with_holes(
+    importer: &Importer,
+    container: &[[Scalar; 2]],
+    holes: &[Vec<[Scalar; 2]>],
+) -> Option<Container> {
+    let bare_ext = ExtContainer {
+        id: 0,
+        shape: ExtShape::SimplePolygon(ext_spolygon(container)),
+        zones: vec![],
+    };
+    let bare = importer.import_container(&bare_ext).ok()?;
+    if holes.is_empty() {
+        return Some(bare);
+    }
+
+    let root = bare.base_cde.bbox();
+    let zones: Vec<ExtQualityZone> = holes
+        .iter()
+        .filter_map(|hole| {
+            let in_bounds = hole.iter().all(|p| {
+                p[0] >= root.x_min && p[0] <= root.x_max && p[1] >= root.y_min && p[1] <= root.y_max
+            });
+            let shape = if in_bounds {
+                ext_spolygon(hole)
+            } else {
+                ext_spolygon(&clip_polygon_to_rect(hole, root)?)
+            };
+            Some(ExtQualityZone {
+                quality: 0,
+                shape: ExtShape::SimplePolygon(shape),
+            })
+        })
+        .collect();
+
+    let ext = ExtContainer {
+        id: 0,
+        shape: ExtShape::SimplePolygon(ext_spolygon(container)),
+        zones,
+    };
+    importer.import_container(&ext).ok()
+}
+
+/// Nests `items` (each with a demand `qty`) into a single irregular `container` with optional
+/// `holes` (keep-out zones the parts must avoid).
 ///
 /// * `items` — one outline per item *type*, in item-local coordinates.
 /// * `qty` — demand per item type (`qty.len() == items.len()`).
-/// * `container` — the container boundary outline (holes/keepouts: a later milestone).
-/// * `min_sep` — minimum separation between any two parts (and part↔boundary); `0.0` to disable.
+/// * `container` — the container boundary outline.
+/// * `holes` — keep-out polygons inside the container that no part may overlap (interior voids,
+///   sheet defects, or — to "nest inside a part" — the solid region of an already-placed part,
+///   leaving its void nestable). Empty ⇒ no holes. Imported as quality-0 zones.
+/// * `min_sep` — minimum separation between any two parts (and part↔boundary↔hole); `0.0` to disable.
 /// * `rotations_deg` — allowed discrete orientations in degrees (e.g. `[0.0, 90.0, 180.0, 270.0]`);
 ///   empty ⇒ no rotation.
 /// * `seed` — explicit PRNG seed (no implicit/entropy fallback, ever).
@@ -98,10 +228,12 @@ fn ext_spolygon(outline: &[[Scalar; 2]]) -> ExtSPolygon {
 ///
 /// Determinism: the same arguments always produce a byte-identical [`NestSolution`].
 #[must_use]
+#[allow(clippy::too_many_arguments)]
 pub fn nest(
     items: &[Vec<[Scalar; 2]>],
     qty: &[usize],
     container: &[[Scalar; 2]],
+    holes: &[Vec<[Scalar; 2]>],
     min_sep: Scalar,
     rotations_deg: &[Scalar],
     seed: u64,
@@ -125,13 +257,9 @@ pub fn nest(
     };
     let rotations_rad: Vec<Scalar> = rotations_deg_vec.iter().map(|d| d.to_radians()).collect();
 
-    // Import the container; a malformed container ⇒ nothing can be placed.
-    let ext_container = ExtContainer {
-        id: 0,
-        shape: ExtShape::SimplePolygon(ext_spolygon(container)),
-        zones: vec![],
-    };
-    let Ok(container_entity) = importer.import_container(&ext_container) else {
+    // Import the container (with its holes as quality-0 keep-out zones). A malformed container or
+    // hole ⇒ nothing can be placed (conservative — never silently place into an intended keep-out).
+    let Some(container_entity) = import_container_with_holes(&importer, container, holes) else {
         return NestSolution {
             placements: vec![],
             unplaced: all_unplaced(qty),
@@ -213,6 +341,74 @@ pub fn nest(
 
     NestSolution {
         placements,
+        unplaced,
+    }
+}
+
+/// Nests `items` (demand `qty`) across several `sheets` in order: each sheet is filled with whatever
+/// demand remains, then the rest spills to the next. Returns the placements per sheet plus the global
+/// unplaced.
+///
+/// Determinism: each sheet is nested with a seed derived deterministically from `seed` and the sheet
+/// index, so the whole result is byte-identical for the same arguments. `min_sep`, `rotations_deg`,
+/// and `budget` carry the same meaning as in [`nest`].
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn nest_multi(
+    items: &[Vec<[Scalar; 2]>],
+    qty: &[usize],
+    sheets: &[Sheet],
+    min_sep: Scalar,
+    rotations_deg: &[Scalar],
+    seed: u64,
+    budget: u64,
+) -> MultiSheetSolution {
+    assert_eq!(
+        items.len(),
+        qty.len(),
+        "items and qty must be the same length"
+    );
+
+    let mut remaining = qty.to_vec();
+    let mut per_sheet = Vec::with_capacity(sheets.len());
+
+    for (i, sheet) in sheets.iter().enumerate() {
+        // A distinct, deterministic per-sheet seed (SplitMix64 in the PRNG de-correlates adjacent
+        // seeds, so `seed + i` gives well-separated streams).
+        let sheet_seed = seed.wrapping_add(i as u64);
+        let sol = nest(
+            items,
+            &remaining,
+            &sheet.outline,
+            &sheet.holes,
+            min_sep,
+            rotations_deg,
+            sheet_seed,
+            budget,
+        );
+
+        for p in &sol.placements {
+            remaining[p.item] -= 1;
+        }
+        per_sheet.push(sol.placements);
+
+        if remaining.iter().all(|&r| r == 0) {
+            break; // everything placed — no need to touch the remaining sheets
+        }
+    }
+
+    // Keep `per_sheet` index-parallel with `sheets`: any trailing sheets we broke out of (because
+    // demand ran out) get an empty placement list, so `per_sheet[i]` is always valid for every sheet.
+    per_sheet.resize_with(sheets.len(), Vec::new);
+
+    let unplaced = remaining
+        .iter()
+        .enumerate()
+        .flat_map(|(i, &n)| std::iter::repeat_n(i, n))
+        .collect();
+
+    MultiSheetSolution {
+        per_sheet,
         unplaced,
     }
 }

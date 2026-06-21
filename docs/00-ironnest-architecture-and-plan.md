@@ -334,7 +334,17 @@ is the spike's jagua number.
   `cargo deny` (license allowlist in `deny.toml`) + a CycloneDX SBOM. Committed `Cargo.lock`.
 - **Phase 5 — Consumer integration** (`drawing_and_gcode` #258): adapter, remove Python engines,
   audit sidecar, overlay/dry-run still gate the torch.
-- **Phase 6 — Interior-void & multi-sheet polish** (subsumes #257's geometry).
+- **Phase 6 — Interior-void & multi-sheet. ✅ DONE (2026-06-21).** `nest()` gained a `holes`
+  (keep-out zones) parameter → imported as quality-0 container zones (static CDE hazards every part
+  avoids). Construction respects them automatically; the separation search gained a `poly↔hole` proxy
+  (`quantify_collision_poly_hole`, bbox-area, folded into the per-item static-hazard loss, canonical
+  sorted-`HazKey` sum). This is the "nesting inside parts" capability: a part's *void* is nestable and
+  its *solid* region is passed as keep-outs (tested — parts nest inside a void bounded entirely by
+  keep-outs, and never overlap a hole). `nest_multi(sheets…)` + `Sheet`/`MultiSheetSolution` spill
+  demand across sheets with deterministic per-sheet seeds. Re-exported via `crates/ironnest`; bound in
+  the wheel (`nest(holes)` + `nest_multi`, validated `import ironnest` + pytest). A `sheet-with-hole`
+  case joined the cross-platform golden (the no-hole cases stayed byte-identical). Caveat unchanged:
+  `min_sep>0` inflates holes via geo-buffer (risk #2, not byte-stable) — the golden uses `min_sep=0`.
 
 ---
 

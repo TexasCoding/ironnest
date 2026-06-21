@@ -16,9 +16,11 @@
 //! order — deterministic for a deterministic op history). All loss/weight sums run over the dense
 //! `Vec`/index ranges in a **fixed canonical order**, so totals are byte-identical. `+ − × ÷` only.
 
-use super::proxy::{quantify_collision_poly_container, quantify_collision_poly_poly};
-use ironnest_cde::collision_detection::hazards::HazardEntity;
+use super::proxy::{
+    quantify_collision_poly_container, quantify_collision_poly_hole, quantify_collision_poly_poly,
+};
 use ironnest_cde::collision_detection::hazards::collector::BasicHazardCollector;
+use ironnest_cde::collision_detection::hazards::{HazKey, HazardEntity};
 use ironnest_cde::entities::{Layout, PItemKey};
 use ironnest_geo::Scalar;
 use slotmap::SecondaryMap;
@@ -127,11 +129,10 @@ impl CollisionTracker {
         let idx = self.pk_idx_map[pk];
         let shape = &layout.placed_items[pk].shape;
 
-        // Reset this item's losses (pair row + container).
+        // Reset this item's pair-loss row (the container/static loss is overwritten wholesale below).
         for i in 0..self.size {
             self.pair_collisions[(idx, i)].loss = 0.0;
         }
-        self.container_collisions[idx].loss = 0.0;
 
         // Which hazards does the item currently collide with? Pre-seed the collector with the item's
         // own hazard so the collection skips it (a shape "collides" with its own coincident hazard).
@@ -146,26 +147,37 @@ impl CollisionTracker {
         );
         layout.cde().collect_poly_collisions(shape, &mut collector);
 
-        // This loop only *assigns* per-cell losses (never `+=`), so its iteration order over the
-        // `SecondaryMap` collector is irrelevant — the determinism-sensitive summation happens later
-        // in `loss()` / `total_loss()`, which fold over the dense storage in a fixed canonical order.
+        // Pairwise cells are *assigned* (one hazard per other item), so their order is irrelevant.
+        // The item's static-hazard loss (container exterior + any holes / keep-out zones) is the sum
+        // of several hazards, so collect them and sum in canonical `HazKey` order for byte-stability.
         let container_bbox = layout.container.outer_cd.bbox;
+        let mut static_terms: Vec<(HazKey, Scalar)> = Vec::new();
         for (hkey, haz) in &collector {
             if hkey == self_hkey {
                 continue;
             }
-            if let HazardEntity::PlacedItem { pk: other_pk, .. } = haz {
-                let shape_other = &layout.placed_items[*other_pk].shape;
-                let idx_other = self.pk_idx_map[*other_pk];
-                let loss = quantify_collision_poly_poly(shape, shape_other);
-                self.pair_collisions[(idx, idx_other)].loss = loss;
-            } else {
-                // Exterior (and, in a future holes milestone, Hole / InferiorQualityZone) — quantify
-                // against the container bbox. Only `Exterior` occurs on the current `nest()` path.
-                let loss = quantify_collision_poly_container(shape, container_bbox);
-                self.container_collisions[idx].loss = loss;
+            match haz {
+                HazardEntity::PlacedItem { pk: other_pk, .. } => {
+                    let shape_other = &layout.placed_items[*other_pk].shape;
+                    let idx_other = self.pk_idx_map[*other_pk];
+                    self.pair_collisions[(idx, idx_other)].loss =
+                        quantify_collision_poly_poly(shape, shape_other);
+                }
+                HazardEntity::Exterior => {
+                    static_terms.push((
+                        hkey,
+                        quantify_collision_poly_container(shape, container_bbox),
+                    ));
+                }
+                // A hole / keep-out zone the part must avoid (the interior-void path).
+                HazardEntity::Hole { .. } | HazardEntity::InferiorQualityZone { .. } => {
+                    let hole_shape = &layout.cde().hazards_map[hkey].shape;
+                    static_terms.push((hkey, quantify_collision_poly_hole(shape, hole_shape)));
+                }
             }
         }
+        static_terms.sort_unstable_by_key(|(hkey, _)| *hkey);
+        self.container_collisions[idx].loss = static_terms.iter().map(|(_, l)| *l).sum();
     }
 
     /// After an item is removed and re-placed (acquiring a new key but the same dense index),

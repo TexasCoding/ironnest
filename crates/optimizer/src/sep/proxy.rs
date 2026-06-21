@@ -88,6 +88,24 @@ pub fn quantify_collision_poly_poly(s1: &SPolygon, s2: &SPolygon) -> Scalar {
     overlap_proxy.sqrt() * penalty
 }
 
+/// Quantifies a collision between a part and a **hole / keep-out zone** (a region the part must
+/// *avoid*) — the interior-void dual of the container quantifier. The overlap is the bbox-area the
+/// part shares with the hole (always positive when the CDE reports a collision, since overlapping
+/// shapes have overlapping bboxes); the floor `epsilon^2` keeps it strictly positive. A bbox
+/// approximation, consistent with [`quantify_collision_poly_container`] — only a ranking signal, with
+/// the CDE's `Hole` hazard the real feasibility arbiter (and construction already places exactly,
+/// so this only guides the separation search's squeeze near holes).
+#[must_use]
+pub fn quantify_collision_poly_hole(part: &SPolygon, hole: &SPolygon) -> Scalar {
+    let overlap = Rect::intersection(part.bbox, hole.bbox).map_or(0.0, |r| r.area());
+    let epsilon = Scalar::max(part.diameter, hole.diameter) * OVERLAP_PROXY_EPSILON_DIAM_RATIO;
+    debug_assert!(overlap.is_finite() && overlap >= 0.0);
+
+    let penalty = calc_shape_penalty(part, part);
+
+    2.0 * (overlap + epsilon.powi(2)).sqrt() * penalty
+}
+
 /// Quantifies a collision between a simple polygon and the *exterior* of the container, approximated
 /// by the container bounding box. sparrow `quantify::quantify_collision_poly_container`.
 ///

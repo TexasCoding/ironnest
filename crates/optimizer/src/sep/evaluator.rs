@@ -16,7 +16,9 @@
 //! the weighted loss is byte-identical regardless of CDE traversal order — robustness over the
 //! constant-factor speedup. `+ − × ÷ sqrt` only.
 
-use super::proxy::{quantify_collision_poly_container, quantify_collision_poly_poly};
+use super::proxy::{
+    quantify_collision_poly_container, quantify_collision_poly_hole, quantify_collision_poly_poly,
+};
 use super::tracker::CollisionTracker;
 use ironnest_cde::collision_detection::hazards::collector::BasicHazardCollector;
 use ironnest_cde::collision_detection::hazards::{HazKey, HazardEntity};
@@ -138,15 +140,26 @@ impl<'a> SeparationEvaluator<'a> {
         let mut terms: Vec<(HazKey, Scalar)> = collector
             .iter()
             .map(|(hkey, haz)| {
-                let term = if let HazardEntity::PlacedItem { pk: other_pk, .. } = haz {
-                    let other_shape = &self.layout.placed_items[*other_pk].shape;
-                    let loss = quantify_collision_poly_poly(other_shape, &self.shape_buff);
-                    loss * self.tracker.pair_weight(self.current_pk, *other_pk)
-                } else {
-                    // Exterior (and future Hole / InferiorQualityZone) → container quantification.
-                    let loss =
-                        quantify_collision_poly_container(&self.shape_buff, self.container_bbox);
-                    loss * self.tracker.container_weight(self.current_pk)
+                let term = match haz {
+                    HazardEntity::PlacedItem { pk: other_pk, .. } => {
+                        let other_shape = &self.layout.placed_items[*other_pk].shape;
+                        let loss = quantify_collision_poly_poly(other_shape, &self.shape_buff);
+                        loss * self.tracker.pair_weight(self.current_pk, *other_pk)
+                    }
+                    HazardEntity::Exterior => {
+                        let loss = quantify_collision_poly_container(
+                            &self.shape_buff,
+                            self.container_bbox,
+                        );
+                        loss * self.tracker.container_weight(self.current_pk)
+                    }
+                    // A hole / keep-out zone the part must avoid (the interior-void path); shares the
+                    // item's single static-hazard GLS weight with the exterior.
+                    HazardEntity::Hole { .. } | HazardEntity::InferiorQualityZone { .. } => {
+                        let hole_shape = &self.layout.cde().hazards_map[hkey].shape;
+                        let loss = quantify_collision_poly_hole(&self.shape_buff, hole_shape);
+                        loss * self.tracker.container_weight(self.current_pk)
+                    }
                 };
                 (hkey, term)
             })
@@ -172,10 +185,14 @@ pub fn unweighted_overlap(layout: &Layout, shape: &SPolygon) -> Scalar {
     let mut terms: Vec<(HazKey, Scalar)> = collector
         .iter()
         .map(|(hkey, haz)| {
-            let term = if let HazardEntity::PlacedItem { pk: other_pk, .. } = haz {
-                quantify_collision_poly_poly(&layout.placed_items[*other_pk].shape, shape)
-            } else {
-                quantify_collision_poly_container(shape, container_bbox)
+            let term = match haz {
+                HazardEntity::PlacedItem { pk: other_pk, .. } => {
+                    quantify_collision_poly_poly(&layout.placed_items[*other_pk].shape, shape)
+                }
+                HazardEntity::Exterior => quantify_collision_poly_container(shape, container_bbox),
+                HazardEntity::Hole { .. } | HazardEntity::InferiorQualityZone { .. } => {
+                    quantify_collision_poly_hole(shape, &layout.cde().hazards_map[hkey].shape)
+                }
             };
             (hkey, term)
         })

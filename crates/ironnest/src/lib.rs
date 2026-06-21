@@ -18,4 +18,6 @@
 //! grew the real [`nest`] there; this crate graduates it to the public name.
 
 #[doc(inline)]
-pub use ironnest_optimizer::{NestSolution, Placement, Scalar, nest};
+pub use ironnest_optimizer::{
+    MultiSheetSolution, NestSolution, Placement, Scalar, Sheet, nest, nest_multi,
+};
