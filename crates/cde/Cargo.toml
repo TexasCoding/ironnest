@@ -12,3 +12,12 @@ workspace = true
 
 [dependencies]
 ironnest-geo = { workspace = true }
+# Pinned to jagua-rs 0.7.2's versions (pure-Rust, no C / no build.rs).
+slotmap   = "1.0"                                      # deterministic keyed storage (core)
+itertools = "0.14"
+anyhow    = "1.0"
+log       = "0.4"
+serde     = { version = "1.0", features = ["derive"] }
+float-cmp = "0.10"
+# Deliberately ABSENT (determinism scrub): `rayon` (par_iter → sequential iter), `web-time`
+# (wall-clock Instant → u64 logical stamp). `ordered-float` reaches us via `ironnest_geo`.

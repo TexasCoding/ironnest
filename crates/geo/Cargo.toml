@@ -11,3 +11,19 @@ publish      = false
 workspace = true
 
 [dependencies]
+# Pinned to jagua-rs 0.7.2's versions (pure-Rust, no C / no build.rs → clean cross-platform wheels).
+ordered-float = "5.0"
+itertools     = "0.14"
+anyhow        = "1.0"
+log           = "0.4"
+serde         = { version = "1.0", features = ["derive"] }
+float-cmp     = "0.10"
+ndarray       = "0.17"
+geo-types     = "0.7"
+geo-buffer    = "0.2"      # min-sep offsetter (plan risk #2: prove bit-stable or replace)
+# num-traits via a direct dep (jagua reached it through `rand_distr::num_traits`; we drop the
+# rand_* name from the geometry leaf — no RNG lives here).
+num-traits    = "0.2"
+# libm: pure-Rust, cross-platform byte-identical transcendentals. Replaces std `sin_cos`/`atan2`
+# on the (non-cardinal) rotation path; the placement path uses exact cardinal matrices instead.
+libm          = "0.2"

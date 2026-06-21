@@ -6,8 +6,9 @@ members  = ["crates/geo", "crates/cde", "crates/optimizer", "crates/ironnest", "
 
 [workspace.package]
 version      = "0.0.0"      # pre-spike
-edition      = "2024"       # jagua-rs lineage; needs Rust ≥ 1.85
-rust-version = "1.85"       # MSRV floor (we build on the pinned 1.96.0 — see rust-toolchain.toml)
+edition      = "2024"       # jagua-rs lineage; edition 2024 needs Rust ≥ 1.85
+rust-version = "1.87"       # MSRV floor: jagua's forked code uses {integer}::cast_signed/cast_unsigned
+                            # (stable 1.87). We build on the pinned 1.96.0 — see rust-toolchain.toml.
 license      = "MPL-2.0"    # uniform across the repo
 
 [workspace.dependencies]

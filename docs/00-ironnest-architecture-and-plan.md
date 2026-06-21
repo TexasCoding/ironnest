@@ -282,9 +282,16 @@ is the spike's jagua number.
 
 ## 10. Phased roadmap
 
-- **Phase 0 — Spike** (§9): density + x-platform determinism proofs. *(in progress: source verify)*
-- **Phase 1 — Fork & f64.** Vendor the minimal jagua subset into `crates/geo` + `crates/cde`;
-  flip to f64; green its own tests. Determinism scrub (rayon/HashMap/transcendentals).
+- **Phase 0 — Spike** (§9): density + x-platform determinism proofs. *(source verify ✅; density +
+  x-platform determinism proofs still pending — see Phase 3.)*
+- **Phase 1 — Fork & f64. ✅ DONE (2026-06-20).** Vendored the minimal jagua subset into
+  `crates/geo` (geometry + `fpa`) + `crates/cde` (CDE + entities + io + bpp + assertions); flipped
+  every `f32`→`Scalar` (=f64); ported with the crate-split done via `pub use ironnest_geo as
+  geometry` (upstream `crate::geometry::*` paths resolve unchanged). Determinism scrub: `sin_cos`/
+  `atan2`→pure-Rust `libm`; rayon `par_iter`→sequential; debug `HashSet`→`Vec`; wall-clock
+  `Instant`→`u64` 0. Green: `build --locked`, `clippy --all-targets -D warnings` (determinism gate +
+  jagua's pedantic posture), 11 fork-locking tests. Adversarially verified (fidelity diff = clean;
+  determinism clean except the geo-buffer residual). MSRV floor corrected 1.85→1.87 (`cast_*`).
 - **Phase 2 — Optimizer.** `crates/optimizer`: deterministic constructive + separation local
   search, discrete rotations, iteration budget. Benchmark vs 75.5%.
 - **Phase 3 — Determinism harness.** The test pyramid (§6) incl. the cross-platform CI golden.
@@ -300,11 +307,17 @@ is the spike's jagua number.
 
 1. ~~**f64 port size**~~ **RESOLVED** (verified): typed rewrite of ~41 files, mechanical, ~1–2
    days; no `fsize` flag exists. Mitigated by adding our own `Scalar` alias. See `01-…md` §A.
-2. **Cross-platform byte-identity actually holding** — verification narrowed this to **two**
-   hazards (§6): `sin_cos` (eliminated by hardcoded cardinal-rotation matrices) and **`geo-buffer`'s
-   rounded offset** (the real residual — a third-party offsetter we must replace or vendor+pin). The
-   x-platform CI golden is the safety net (fails loud). Residual risk now concentrates on the
-   offsetter, not the broad geometry core.
+2. **Cross-platform byte-identity actually holding** — after the Phase-1 fork, **exactly ONE**
+   residual remains (everything else verified clean): `sin_cos`/`atan2` are now routed through
+   pure-Rust `libm` (portable; runs on the placement path via `compose()` but byte-identically), so
+   the lone hazard is **`geo-buffer`'s rounded offset**. ⚠ **Sharpened by the Phase-1 fork audit:**
+   `geo-buffer 0.2` calls **std `f64::sin`/`f64::cos` internally** (its `ray::rotate_by`), so
+   *registry-pinning alone is NOT enough* — its output is platform-divergent. It only matters when
+   `min_item_separation != 0` (offset feeds the item's collision shape). **Action before shipping
+   nonzero-separation configs:** replace with our own deterministic offsetter (miter/pinned-arc), OR
+   vendor `geo-buffer` and swap its `sin`/`cos` for `libm`, then prove bit-stability in the
+   x-platform golden. Until then, treat nonzero-min-sep layouts as not-yet-byte-identical. The
+   x-platform CI golden is the safety net (fails loud).
 3. **Density clears the bar** — `lbf` is a weak heuristic and `sparrow` is strip-packing; our
    optimizer must reach ~85–90% on a *fixed irregular bin*. The spike measures it before we invest.
 4. **jagua edition 2024 / Rust ≥ ~1.85** in CI; no declared MSRV upstream → pin the toolchain.
@@ -317,10 +330,12 @@ is the spike's jagua number.
 - Repo **visibility: private now**, flip to public when ready to open-source (publishing is the
   one-way door).
 - **License: MPL-2.0 uniform** (see §12).
-
-**Still open:**
-- Final crate split (single workspace crate vs `geo`/`cde`/`optimizer`/`ironnest`/`py`) — finalize
-  at scaffold time (Phase 1), now that the fork map (`01-…md` §B) is known.
+- **Crate split: FINALIZED** as `geo`/`cde`/`optimizer`/`ironnest`/`py` (Phase 1 landed it).
+  Boundary decisions made during the fork: jagua's single crate split with `geometry/*`+`util/fpa`→
+  `geo` and everything else→`cde`; `cde` re-exports `geo` as `geometry` (`pub use ironnest_geo as
+  geometry`) so upstream `crate::geometry::*` paths resolve unchanged; `io` stays whole in `cde` and
+  `geo`'s lone inbound `crate::io` call (in `shape_modification::offset_shape`) was severed by
+  inlining the polygon cleanup, keeping `geo` a true leaf.
 
 ---
 
