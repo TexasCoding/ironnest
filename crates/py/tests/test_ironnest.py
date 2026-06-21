@@ -9,6 +9,7 @@ byte-identity is proven by the Rust golden (Phase 3); these tests prove the whee
 correctly and that the Python marshalling preserves determinism (Python `float` is IEEE f64, so
 `==` on the returned tuples is an exact bit comparison)."""
 
+import math
 import os
 import threading
 import time
@@ -115,6 +116,72 @@ def _time_concurrent(n):
 
 def _median(samples):
     return sorted(samples)[len(samples) // 2]
+
+
+def _circle(n, r):
+    """An n-vertex CCW regular polygon ("circle") of radius r, centered at the origin."""
+    return [(r * math.cos(2 * math.pi * i / n), r * math.sin(2 * math.pi * i / n)) for i in range(n)]
+
+
+def _apply_pose(outline, rot_deg, x, y):
+    """placed = Rot(rot_deg)·original + (x, y) — exactly how the consumer decodes a placement."""
+    a = math.radians(rot_deg)
+    c, s = math.cos(a), math.sin(a)
+    return [(c * px - s * py + x, s * px + c * py + y) for px, py in outline]
+
+
+def _point_seg_dist(p, a, b):
+    abx, aby = b[0] - a[0], b[1] - a[1]
+    len2 = abx * abx + aby * aby
+    if len2 == 0.0:
+        return math.dist(p, a)
+    t = max(0.0, min(1.0, ((p[0] - a[0]) * abx + (p[1] - a[1]) * aby) / len2))
+    return math.dist(p, (a[0] + t * abx, a[1] + t * aby))
+
+
+def _seg_seg_dist(a, b, c, d):
+    def ccw(p, q, r):
+        return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+
+    if (ccw(c, d, a) > 0) != (ccw(c, d, b) > 0) and (ccw(a, b, c) > 0) != (ccw(a, b, d) > 0):
+        return 0.0  # segments cross
+    return min(
+        _point_seg_dist(a, c, d),
+        _point_seg_dist(b, c, d),
+        _point_seg_dist(c, a, b),
+        _point_seg_dist(d, a, b),
+    )
+
+
+def _poly_poly_dist(p, q):
+    """Min boundary-to-boundary distance between two closed polygons (the consumer's gate metric)."""
+    return min(
+        _seg_seg_dist(p[i], p[(i + 1) % len(p)], q[j], q[(j + 1) % len(q)])
+        for i in range(len(p))
+        for j in range(len(q))
+    )
+
+
+def test_high_vertex_curved_part_keeps_min_sep_through_the_wheel():
+    """The consumer's failure case, end-to-end through the wheel: a high-vertex curved part (the class
+    that under-reserved on curves and was slow) must nest with its returned ORIGINAL outlines kept at
+    least min_sep apart — from each other and the boundary — to within 1e-6. This is exactly the
+    re-validation gate the consumer runs before cutting. Decimation is automatic; no API change."""
+    min_sep = 0.75
+    r = 12.0
+    part = _circle(200, r)
+    container = _rect(80.0, 52.0)
+    placements, _ = ironnest.nest([part], [6], container, [], min_sep, CARDINAL, 7, 2500)
+    assert len(placements) >= 2, f"need ≥2 placed to check spacing, got {len(placements)}"
+
+    placed = [_apply_pose(part, rot, x, y) for (_item, x, y, rot) in placements]
+    tol = 1e-6
+    for i in range(len(placed)):
+        for j in range(i + 1, len(placed)):
+            gap = _poly_poly_dist(placed[i], placed[j])
+            assert gap >= min_sep - tol, f"parts {i},{j} are {gap:.9f} apart, under min_sep {min_sep}"
+        edge_gap = _poly_poly_dist(placed[i], container)
+        assert edge_gap >= min_sep - tol, f"part {i} is {edge_gap:.9f} from boundary, under {min_sep}"
 
 
 @pytest.mark.skipif((os.cpu_count() or 1) < 2, reason="needs ≥2 cores to observe parallelism")

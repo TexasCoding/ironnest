@@ -43,6 +43,8 @@ impl Importer {
                 offset: min_item_separation.map(|f| f / 2.0),
                 simplify_tolerance,
                 narrow_concavity_cutoff,
+                // FORK(ironnest): off by default; the optimizer sets it per high-vertex item.
+                collision_decimation: None,
             },
             cde_config,
         }

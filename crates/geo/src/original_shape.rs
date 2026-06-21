@@ -7,8 +7,8 @@ use crate::Scalar;
 use crate::geo_traits::Transformable;
 use crate::primitives::{Point, Rect, SPolygon};
 use crate::shape_modification::{
-    ShapeModifyConfig, ShapeModifyMode, close_narrow_concavities, offset_shape,
-    shape_modification_valid, simplify_shape,
+    DECIMATION_MIN_VERTICES, ShapeModifyConfig, ShapeModifyMode, close_narrow_concavities,
+    offset_shape, shape_modification_valid, simplify_dp, simplify_shape,
 };
 use anyhow::Result;
 
@@ -28,6 +28,34 @@ impl OriginalShape {
     pub fn convert_to_internal(&self) -> Result<SPolygon> {
         // Apply the transformation
         let mut internal = self.shape.transform_clone(&self.pre_transform.compose());
+
+        // FORK(ironnest): collision-footprint decimation path, taken only for HIGH-VERTEX shapes (the
+        // curved parts/containers that are both slow and slightly under-reserved by the polygonal
+        // offsetter). Douglas–Peucker simplify FIRST, then offset by `offset + tol`. Because DP keeps
+        // the simplified boundary within `tol` of the original, offsetting by the extra `+tol` makes
+        // the result a superset of `original ⊕ disk(offset)` for Inflate (and, symmetrically, a subset
+        // of `original ⊖ disk(offset)` for Deflate). Empirically `tol` is also ~100× the offsetter's
+        // polygonal curve deficit, so it covers that too — keeping placed *original* outlines ≥ the
+        // intended clearance from each other AND from a curved container boundary. The gate on vertex
+        // count keeps simple parts and low-vertex containers (incl. axis-aligned sheets) on the exact
+        // path below, so their behavior — and the determinism golden — is byte-for-byte unchanged.
+        // `self.shape` (the original outline that drives the reported placement frame) is never touched.
+        if let Some(tol) = self.modify_config.collision_decimation
+            && self.shape.n_vertices() > DECIMATION_MIN_VERTICES
+        {
+            // This path replaces (does not compose with) the default offset-then-simplify below.
+            debug_assert!(
+                self.modify_config.simplify_tolerance.is_none()
+                    && self.modify_config.narrow_concavity_cutoff.is_none(),
+                "collision_decimation is mutually exclusive with simplify_tolerance / narrow_concavity_cutoff"
+            );
+            internal = simplify_dp(&internal, tol);
+            let total_offset = self.modify_config.offset.unwrap_or(0.0) + tol;
+            if total_offset != 0.0 {
+                internal = offset_shape(&internal, self.modify_mode, total_offset)?;
+            }
+            return Ok(internal);
+        }
 
         if let Some(offset) = self.modify_config.offset {
             // Offset the shape

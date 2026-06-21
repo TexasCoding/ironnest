@@ -30,6 +30,28 @@ fn rect(w: Scalar, h: Scalar) -> Vec<[Scalar; 2]> {
     vec![[0.0, 0.0], [w, 0.0], [w, h], [0.0, h]]
 }
 
+/// A 64-vertex CCW "circle" of radius `r` centered at the origin — a high-vertex curved part that
+/// stands in for the consumer's hundreds-of-vertex developed-cone shells and triggers collision
+/// decimation (64 > `DECIMATION_MIN_VERTICES`).
+///
+/// DETERMINISM(ironnest): the golden_dump output must be byte-identical on every platform, so the
+/// *input geometry* must be too. We therefore build the vertices with a fixed rotation recurrence
+/// using only `+ − ×` on the **f64 literals** `cos(π/32)` / `sin(π/32)` — never std `sin`/`cos` at
+/// dump time (whose platform libm would diverge). Literals + IEEE arithmetic ⇒ identical bits
+/// everywhere; the recurrence's sub-ULP radius drift over 64 steps is immaterial (it is still a fixed,
+/// valid, curved polygon — the point is a many-vertex convex outline, not a perfect circle).
+fn circle_64(r: Scalar) -> Vec<[Scalar; 2]> {
+    const C: Scalar = 0.9951847266721969; // cos(π/32)
+    const S: Scalar = 0.0980171403295606; // sin(π/32)
+    let mut pts = Vec::with_capacity(64);
+    let (mut x, mut y) = (r, 0.0);
+    for _ in 0..64 {
+        pts.push([x, y]);
+        (x, y) = (C * x - S * y, S * x + C * y);
+    }
+    pts
+}
+
 const CARDINAL: [Scalar; 4] = [0.0, 90.0, 180.0, 270.0];
 
 /// One golden case. Everything here is fixed — seeds, budgets, geometry — so the output is a pure
@@ -132,6 +154,36 @@ fn corpus() -> Vec<Case> {
             min_sep: 4.0,
             rotations: CARDINAL.to_vec(),
             seed: 8,
+            budget: 1000,
+        },
+        // Collision-footprint decimation path (Inflate / item side): a high-vertex (64-gon) curved part
+        // at nonzero min_sep. Its collision footprint is Douglas–Peucker-simplified then offset by
+        // min_sep/2 + tol — both the DP (pure +−×÷) and the offset (vendored libm offsetter) are
+        // cross-platform-deterministic, so this layout is byte-identical on every target too. The
+        // reported placements are in the *original* 64-gon frame. (Proof decimation kept determinism.)
+        Case {
+            name: "decimated-circles",
+            items: vec![circle_64(12.0)],
+            qty: vec![4],
+            container: rect(60.0, 60.0),
+            holes: vec![],
+            min_sep: 1.0,
+            rotations: CARDINAL.to_vec(),
+            seed: 8,
+            budget: 1000,
+        },
+        // Decimation path on the Deflate / container side: a high-vertex (64-gon) curved CONTAINER is
+        // DP-simplified then deflated by min_sep/2 + tol. Exercises the symmetric container/boundary
+        // over-reservation across platforms; simple square parts (4 vtx) stay on the exact path.
+        Case {
+            name: "decimated-curved-container",
+            items: vec![rect(8.0, 8.0)],
+            qty: vec![6],
+            container: circle_64(30.0),
+            holes: vec![],
+            min_sep: 1.0,
+            rotations: CARDINAL.to_vec(),
+            seed: 4,
             budget: 1000,
         },
     ]

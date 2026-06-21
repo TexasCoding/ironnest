@@ -37,6 +37,17 @@ pub use prng::Prng;
 /// item, then tries to place any still-unplaced items in the freed space). Fixed — never a wall clock.
 const IMPROVE_ROUNDS: u32 = 3;
 
+/// Douglas–Peucker tolerance for collision-footprint decimation, as a fraction of `min_sep`. Every
+/// hazard's footprint (items inflate, container/holes deflate/inflate) is offset by `min_sep/2 + tol`
+/// instead of `min_sep/2` on the high-vertex curved path (the per-shape vertex gate lives in
+/// `ironnest_cde::geometry`'s `DECIMATION_MIN_VERTICES`). So `tol` is the over-reservation margin
+/// that (a) compensates DP's bounded inward deviation and (b) comfortably exceeds the offsetter's
+/// sub-mil polygonal curve deficit (`tol` is ~100× it) — keeping the placed *original* outlines ≥
+/// `min_sep` apart from each other AND from a curved container boundary. `min_sep/16` ≈ 0.023 at the
+/// consumer-validated 0.375-in `min_sep` (their validated 0.02-in tol), a negligible density cost
+/// relative to the curved-part speedup.
+const DECIMATION_TOL_FRACTION: Scalar = 1.0 / 16.0;
+
 use ironnest_cde::collision_detection::CDEConfig;
 use ironnest_cde::entities::{Container, Item, Layout};
 use ironnest_cde::geometry::fail_fast::SPSurrogateConfig;
@@ -247,7 +258,14 @@ pub fn nest(
 
     let cde_config = default_cde_config();
     let min_item_separation = (min_sep > 0.0).then_some(min_sep);
-    let importer = Importer::new(cde_config, None, min_item_separation, None);
+    let mut importer = Importer::new(cde_config, None, min_item_separation, None);
+    // Auto collision-footprint decimation: enabled whenever a separation is requested (`min_sep == 0`
+    // needs no offset and so no superset margin). Applied symmetrically to every imported hazard —
+    // items (Inflate), the container boundary and holes (Deflate/Inflate) — but only takes effect on
+    // HIGH-VERTEX shapes; `convert_to_internal` gates per-shape on `DECIMATION_MIN_VERTICES`, so simple
+    // parts and axis-aligned sheets keep the exact offset path (and the determinism golden) unchanged.
+    importer.shape_modify_config.collision_decimation =
+        (min_sep > 0.0).then_some(min_sep * DECIMATION_TOL_FRACTION);
 
     // Rotations: degrees for the importer's metadata, radians for our sampler. Empty ⇒ {0}.
     let rotations_deg_vec: Vec<Scalar> = if rotations_deg.is_empty() {
@@ -266,7 +284,10 @@ pub fn nest(
         };
     };
 
-    // Import items. A malformed item ⇒ that whole type is unplaced.
+    // Import items. A malformed item ⇒ that whole type is unplaced. High-vertex curved parts get
+    // their collision footprint decimated by the importer's `collision_decimation` (gated per-shape in
+    // `convert_to_internal`); `shape_orig` — which drives the reported placement frame — is always the
+    // untouched original outline.
     let mut entities: Vec<Option<Item>> = Vec::with_capacity(items.len());
     for (i, outline) in items.iter().enumerate() {
         let ext_item = ExtItem {

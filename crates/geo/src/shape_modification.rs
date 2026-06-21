@@ -37,6 +37,14 @@ pub struct ShapeModifyConfig {
     /// If undefined, no offset is applied.
     /// See [`offset_shape`]
     pub offset: Option<Scalar>,
+    /// FORK(ironnest): Douglas–Peucker tolerance for decimating a **collision footprint** (curved,
+    /// high-vertex parts). When `Some(tol)`, [`OriginalShape::convert_to_internal`](crate::original_shape::OriginalShape::convert_to_internal)
+    /// takes a dedicated path — DP-simplify by `tol` FIRST, then offset by `offset + tol` (instead of
+    /// the default offset-then-area-simplify) — so the footprint stays a superset of
+    /// `original ⊕ disk(offset)` while shedding most vertices. Set per-item by the optimizer; `None`
+    /// (the default) leaves the upstream pipeline untouched. See [`simplify_dp`].
+    #[serde(default)]
+    pub collision_decimation: Option<Scalar>,
     /// Definition for narrow concavities that can be closed by a straight edge.
     /// Defined as a tuple of (`max_distance_ratio`, `max_area_ratio`) where:
     /// - `max_distance_ratio`: maximum distance between two vertices of a polygon to consider it a narrow concavity, defined as a fraction of the item's diameter.
@@ -152,6 +160,119 @@ pub fn simplify_shape(
     }
 
     simpl_shape
+}
+
+/// FORK(ironnest): vertex count above which a shape's *collision footprint* is decimated (when
+/// `ShapeModifyConfig::collision_decimation` is set) instead of taking the exact offset path. Below
+/// it, [`OriginalShape::convert_to_internal`](crate::original_shape::OriginalShape::convert_to_internal)
+/// offsets the original exactly — so simple parts and low-vertex containers (incl. axis-aligned sheets,
+/// where the offset is already exact) keep byte-for-byte behavior and the determinism golden is
+/// untouched. 32 sits well above any hand-defined polygon yet far below the hundreds-of-vertex curved
+/// shells (e.g. developed cone/reducer outlines) that are both slow and slightly under-reserved on
+/// curves by the polygonal offsetter.
+pub const DECIMATION_MIN_VERTICES: usize = 32;
+
+/// FORK(ironnest): Deterministic Douglas–Peucker simplification of a **closed** polygon, used to
+/// decimate a *collision footprint* — never the returned/original outline (the engine still
+/// reports placements in the original frame; see
+/// [`OriginalShape::convert_to_internal`](crate::original_shape::OriginalShape::convert_to_internal)).
+///
+/// Every retained vertex is an original vertex and DP guarantees no point of the original boundary
+/// lies more than `tol` from the simplified boundary. The caller therefore offsets the result
+/// outward by **`offset + tol`**: the `+tol` exactly compensates DP's bounded inward deviation so the
+/// offset footprint is a superset of `original ⊕ disk(offset)` (and the same margin swamps the
+/// straight-skeleton offsetter's sub-mil polygonal curve deficit). This is what keeps two placed
+/// *original* outlines ≥ `2·offset` apart on curved parts where exact offsetting under-reserved.
+///
+/// DETERMINISM(ironnest): pure `+ − × ÷` and comparisons — no transcendentals, no `mul_add`, no
+/// hashing, and the kept-vertex set is independent of evaluation order — so it is byte-identical on
+/// every target. The perpendicular-distance test is squared (`cross² > tol²·len²`) to avoid `sqrt`
+/// and any sign/zero edge case. Closed-ring DP splits at vertex 0 and the vertex farthest from it
+/// (lowest index breaks ties), then runs standard open-polyline DP on the two arcs.
+#[must_use]
+pub fn simplify_dp(shape: &SPolygon, tol: Scalar) -> SPolygon {
+    let pts = &shape.vertices;
+    let n = pts.len();
+    if n <= 4 || tol <= 0.0 {
+        return shape.clone(); // nothing to gain on a quad/tri (or a non-positive tolerance)
+    }
+    let tol2 = tol * tol;
+
+    // Split anchors: vertex 0 and the vertex farthest from it (lowest index wins ties).
+    let anchor = 0usize;
+    let mut far = anchor;
+    let mut far_d2 = -1.0;
+    for (i, p) in pts.iter().enumerate() {
+        let (dx, dy) = (p.0 - pts[anchor].0, p.1 - pts[anchor].1);
+        let d2 = dx * dx + dy * dy;
+        if d2 > far_d2 {
+            far_d2 = d2;
+            far = i;
+        }
+    }
+    if far == anchor {
+        return shape.clone(); // degenerate: all vertices coincident
+    }
+
+    let mut keep = vec![false; n];
+    keep[anchor] = true;
+    keep[far] = true;
+    dp_mark(pts, anchor, far, n, tol2, &mut keep);
+    dp_mark(pts, far, anchor, n, tol2, &mut keep);
+
+    let kept: Vec<Point> = (0..n).filter(|&i| keep[i]).map(|i| pts[i]).collect();
+
+    // A simple polygon needs ≥ 3 vertices; if DP collapsed it (only possible when `tol` approaches
+    // the shape's own size) keep the original rather than emit something degenerate.
+    match SPolygon::new(kept) {
+        Ok(simplified) if simplified.n_vertices() >= 3 => simplified,
+        _ => shape.clone(),
+    }
+}
+
+/// Marks (`keep[idx] = true`) the Douglas–Peucker vertices on the open arc running from `from` to
+/// `to` in increasing index order modulo `n` (endpoints excluded). Iterative (explicit stack) so a
+/// high-vertex part cannot overflow the call stack; the kept-set is independent of stack ordering.
+fn dp_mark(pts: &[Point], from: usize, to: usize, n: usize, tol2: Scalar, keep: &mut [bool]) {
+    let mut stack = vec![(from, to)];
+    while let Some((from, to)) = stack.pop() {
+        let (start, end) = (pts[from], pts[to]);
+        let (dx, dy) = (end.0 - start.0, end.1 - start.1);
+        let seg2 = dx * dx + dy * dy;
+
+        // Farthest vertex on the arc from the chord start→end. For a fixed chord, perpendicular
+        // distance is monotone in |cross|, so track the max of `cross²` (or point-distance² if the
+        // chord is degenerate, i.e. start == end).
+        let mut farthest: Option<usize> = None;
+        let mut best_metric2 = 0.0;
+        let mut idx = (from + 1) % n;
+        while idx != to {
+            let p = pts[idx];
+            let metric2 = if seg2 > 0.0 {
+                let cross = dx * (p.1 - start.1) - dy * (p.0 - start.0);
+                cross * cross
+            } else {
+                let (ex, ey) = (p.0 - start.0, p.1 - start.1);
+                ex * ex + ey * ey
+            };
+            if metric2 > best_metric2 {
+                best_metric2 = metric2;
+                farthest = Some(idx);
+            }
+            idx = (idx + 1) % n;
+        }
+
+        // Keep the farthest vertex iff it deviates by more than `tol`. Squared, no sqrt:
+        //   dist > tol  ⟺  cross²/seg² > tol²  ⟺  cross² > tol²·seg²   (or pt² > tol² when seg² == 0).
+        let threshold2 = if seg2 > 0.0 { tol2 * seg2 } else { tol2 };
+        if let Some(mid) = farthest
+            && best_metric2 > threshold2
+        {
+            keep[mid] = true;
+            stack.push((from, mid));
+            stack.push((mid, to));
+        }
+    }
 }
 
 fn calculate_area_delta(
