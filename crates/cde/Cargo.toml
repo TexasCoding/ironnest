@@ -1,0 +1,14 @@
+[package]
+name         = "ironnest-cde"
+description   = "ironnest — forked jagua-rs collision-detection engine + entities + io + bpp (f64)"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+publish      = false
+
+[lints]
+workspace = true
+
+[dependencies]
+ironnest-geo = { workspace = true }

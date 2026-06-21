@@ -1,0 +1,12 @@
+# A pyo3 `extension-module` resolves CPython symbols from the host interpreter at RUNTIME, so the
+# linker must leave them undefined at build time. `maturin` sets this automatically; a bare
+# `cargo build`/`test`/`clippy` of the `ironnest-py` cdylib on macOS does not — without it the link
+# fails with "undefined _PyUnicode_… for arch arm64". Link-only: it affects the final cdylib link,
+# NOT the codegen of the engine rlibs (geo/cde/optimizer/ironnest), so it has zero effect on the
+# determinism of solver output. macOS-dev only; Linux allows undefined .so symbols, Windows builds
+# via maturin. See https://pyo3.rs (the "undefined dynamic_lookup" note).
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-undefined", "-C", "link-arg=dynamic_lookup"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-undefined", "-C", "link-arg=dynamic_lookup"]

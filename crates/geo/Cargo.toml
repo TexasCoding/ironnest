@@ -1,0 +1,13 @@
+[package]
+name         = "ironnest-geo"
+description   = "ironnest — forked jagua-rs geometry primitives + shape modification (f64)"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+publish      = false
+
+[lints]
+workspace = true
+
+[dependencies]

@@ -1,0 +1,21 @@
+[package]
+name         = "ironnest-py"
+description   = "PyO3 binding — builds the `ironnest` abi3-py313 wheel"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+publish      = false
+
+# The Python import name is `ironnest`; the artifact is a C-ABI dynamic library.
+[lib]
+name       = "ironnest"
+crate-type = ["cdylib"]
+
+# NB: no `[lints] workspace = true` here — the determinism gate is for the engine crates, and
+# pyo3 macro expansion would otherwise risk false positives in the binding layer.
+
+[dependencies]
+# ironnest = { package = "ironnest", path = "../ironnest" }  # Phase 4: rename to avoid clashing
+#                                                              # with this crate's `ironnest` lib name
+pyo3 = { workspace = true }

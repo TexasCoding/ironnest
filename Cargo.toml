@@ -1,0 +1,33 @@
+# ironnest — Cargo workspace (virtual manifest).
+# Layered architecture (see docs/00 §3):  geo ← cde ← optimizer ← ironnest ;  py → pyo3
+[workspace]
+resolver = "3"
+members  = ["crates/geo", "crates/cde", "crates/optimizer", "crates/ironnest", "crates/py"]
+
+[workspace.package]
+version      = "0.0.0"      # pre-spike
+edition      = "2024"       # jagua-rs lineage; needs Rust ≥ 1.85
+rust-version = "1.85"       # MSRV floor (we build on the pinned 1.96.0 — see rust-toolchain.toml)
+license      = "MPL-2.0"    # uniform across the repo
+
+[workspace.dependencies]
+# Internal crates wired through the layered architecture (path deps).
+ironnest-geo       = { path = "crates/geo" }
+ironnest-cde       = { path = "crates/cde" }
+ironnest-optimizer = { path = "crates/optimizer" }
+ironnest           = { path = "crates/ironnest" }
+# External — pinned; pure-Rust, no C / no build.rs (clean cross-platform wheels).
+pyo3 = { version = "0.29", features = ["abi3-py313", "extension-module"] }
+
+# Determinism: codegen-units=1 removes parallel-codegen nondeterminism from the shipped artifact.
+# (Never build with `-C target-cpu=native` — it diverges across the Mac/Win/Linux fleet.)
+[profile.release]
+codegen-units = 1
+lto           = "thin"
+
+# Make the determinism prime directive a build gate. clippy.toml supplies the banned lists;
+# this enables the lints. Engine crates opt in with `[lints] workspace = true` (py does not,
+# to avoid false positives from pyo3 macro expansion). Promoted to errors by `-D warnings`.
+[workspace.lints.clippy]
+disallowed_types   = "warn"
+disallowed_methods = "warn"
