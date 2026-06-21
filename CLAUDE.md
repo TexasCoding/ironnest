@@ -6,8 +6,14 @@ Rust core + a PyO3 wheel. It is a **fork-and-extend of [jagua-rs](https://github
 byte-reproducible** — with **our own placement optimizer** on top.
 
 **Read first:** [`docs/00-ironnest-architecture-and-plan.md`](docs/00-ironnest-architecture-and-plan.md)
-(the plan) and [`docs/01-jagua-source-verification.md`](docs/01-jagua-source-verification.md)
-(the source-verified fork grounding). They are the source of truth; this file is the short version.
+(the plan), [`docs/01-jagua-source-verification.md`](docs/01-jagua-source-verification.md) (the
+source-verified fork grounding), and [`docs/02-optimizer-and-separation-search.md`](docs/02-optimizer-and-separation-search.md)
+(the optimizer design + the next build: the separation search). They are the source of truth; this
+file is the short version.
+
+**Status (2026-06-21):** Phase 1 (fork→f64) ✅ · Phase 2a (constructive+compaction nester, 87–99% on
+rectangular parts) ✅ · **Next: Phase 2b — the overlap-minimization separation search** for irregular
+density (full GLS or an accurate MTV penetration measure — see `docs/02`). See `docs/00` §10.
 
 ## ⛔ Two prime directives
 
@@ -43,8 +49,9 @@ import-only-then-resorted, `Instant` is metadata). Keep it that way. The verifie
   ⚠ **The Phase-1 audit found `geo-buffer 0.2` calls std `f64::sin`/`cos` internally — so registry
   pinning alone is NOT sufficient.** Live only when `min_item_separation != 0`; until fixed, treat
   nonzero-separation layouts as not-yet-byte-identical. (See `docs/00` §11 risk #2.)
-- **No RNG except our own seeded, portable PRNG** (e.g. `rand_pcg`/ChaCha). Explicit seed always; no
-  `rand::random()` fallback, ever.
+- **No RNG except our own seeded, portable PRNG.** The optimizer **vendors a self-contained PCG64**
+  (`crates/optimizer/src/prng.rs`) — no `rand` dep, so the exact bit-stream is version-independent
+  and byte-stable forever. Explicit seed always; no `getrandom`/`rand::random()` fallback, ever.
 - **No `rayon` / threads on any placement-deciding path.** Single canonical worker; if parallel, fix
   the reduction order. (Import-time `par_iter` is fine — it's re-sorted by id.)
 - **`BTreeMap`/`BTreeSet`/`slotmap` only** where order affects placement. Never std `HashMap`
@@ -69,7 +76,7 @@ import-only-then-resorted, `Instant` is metadata). Keep it that way. The verifie
 
 ## Architecture / crate split (FINALIZED — Phase 1 landed it)
 
-```
+```text
 crates/geo        forked jagua geometry primitives + transforms + fail-fast + shape_modification +
                   fpa, at f64. The geometry LEAF (no deps on entities/io/cde).
 crates/cde        forked jagua CDE + quadtree + hazards + entities + io + probs/bpp + assertions, at

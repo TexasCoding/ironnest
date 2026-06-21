@@ -292,8 +292,22 @@ is the spike's jagua number.
   `Instant`→`u64` 0. Green: `build --locked`, `clippy --all-targets -D warnings` (determinism gate +
   jagua's pedantic posture), 11 fork-locking tests. Adversarially verified (fidelity diff = clean;
   determinism clean except the geo-buffer residual). MSRV floor corrected 1.85→1.87 (`cast_*`).
-- **Phase 2 — Optimizer.** `crates/optimizer`: deterministic constructive + separation local
-  search, discrete rotations, iteration budget. Benchmark vs 75.5%.
+- **Phase 2 — Optimizer.** `crates/optimizer`: deterministic placement search, discrete rotations,
+  iteration budget. Benchmark vs 75.5%.
+  - **2a Constructive + compaction ✅ DONE (2026-06-21).** Item order by descending diameter →
+    sampled Left-Bottom-Fill search (surrogate fail-fast, `10·x_max+y_max` loss, bbox-tightening) →
+    **drop-on-place** (binary-search BLF slide to contact) → slide-compaction + fill rounds. Self-
+    contained portable **PCG64** PRNG (no `rand` dep), fixed sample budget, public `nest(items, qty,
+    container, min_sep, rotations, seed, budget) → NestSolution`, caller-configurable discrete
+    rotations (default cardinal). Anchor-free placements. **Density: 87–99% on rectangular parts
+    (beats the 85–90% target; ~75.5% prior Python), ~65% on irregular.** In-process determinism
+    golden holds; 22 tests; gate green. Committed `ed8ba72`. (See `docs/02` for full design.)
+  - **2b Separation search ⏳ NEXT (the irregular-density driver).** Greedy construction can't
+    *discover* interlocking arrangements (two triangles → a square; a part nesting in a concavity).
+    A tractable pole-gradient separation was prototyped and **reverted** — it doesn't converge
+    (local overlap minima; inscribed poles under-cover). Needs the **full GLS** (penalty weights +
+    restarts + tuning) **or an accurate polygon penetration / MTV measure** — a focused,
+    determinism-critical build. **Design + findings + plan: `docs/02-optimizer-and-separation-search.md`.**
 - **Phase 3 — Determinism harness.** The test pyramid (§6) incl. the cross-platform CI golden.
 - **Phase 4 — PyO3 wheel + CI.** `crates/py`, maturin + cibuildwheel → PyPI (Win-x64, macOS-arm64,
   linux), abi3-py313, committed `Cargo.lock`, `cargo deny` + SBOM.

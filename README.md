@@ -26,11 +26,20 @@ reproduce a byte-identical cut program for the machine audit trail.
 
 ## Status
 
-🚧 **Early development.** **Phase 1 landed (2026-06-20):** the jagua-rs Collision Detection Engine
-is forked to f64 — `crates/geo` (geometry leaf) + `crates/cde` (CDE + entities + io + bin-packing)
-are vendored, ported `f32`→`f64`, determinism-scrubbed, and green (`build --locked`, `clippy -D
-warnings`, tests). **Next:** our placement optimizer (`crates/optimizer`) and the cross-platform
-determinism golden. See [`docs/00-ironnest-architecture-and-plan.md`](docs/00-ironnest-architecture-and-plan.md).
+🚧 **Early development.** A working end-to-end deterministic nester exists.
+
+- **Phase 1 (2026-06-20):** the jagua-rs Collision Detection Engine forked to f64 — `crates/geo` +
+  `crates/cde`, ported `f32`→`f64`, determinism-scrubbed, green.
+- **Phase 2a (2026-06-21):** `crates/optimizer` — a deterministic constructive nester (Left-Bottom-
+  Fill + drop-on-place + slide compaction; self-contained PCG64 PRNG; fixed budget; configurable
+  discrete rotations). **87–99% density on rectangular parts** (beats the 85–90% target), ~65% on
+  irregular. Public `nest(...)`; in-process determinism golden holds.
+
+**Next:** the overlap-minimization **separation search** (irregular-part density), the cross-platform
+determinism golden, and the PyO3 wheel. See
+[`docs/00-ironnest-architecture-and-plan.md`](docs/00-ironnest-architecture-and-plan.md) and the
+optimizer design / separation-search plan in
+[`docs/02-optimizer-and-separation-search.md`](docs/02-optimizer-and-separation-search.md).
 
 ## License
 
