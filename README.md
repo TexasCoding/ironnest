@@ -26,7 +26,11 @@ reproduce a byte-identical cut program for the machine audit trail.
 
 ## Status
 
-🚧 **Planning / pre-spike.** See [`docs/00-ironnest-architecture-and-plan.md`](docs/00-ironnest-architecture-and-plan.md).
+🚧 **Early development.** **Phase 1 landed (2026-06-20):** the jagua-rs Collision Detection Engine
+is forked to f64 — `crates/geo` (geometry leaf) + `crates/cde` (CDE + entities + io + bin-packing)
+are vendored, ported `f32`→`f64`, determinism-scrubbed, and green (`build --locked`, `clippy -D
+warnings`, tests). **Next:** our placement optimizer (`crates/optimizer`) and the cross-platform
+determinism golden. See [`docs/00-ironnest-architecture-and-plan.md`](docs/00-ironnest-architecture-and-plan.md).
 
 ## License
 

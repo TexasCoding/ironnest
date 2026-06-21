@@ -30,12 +30,19 @@ import-only-then-resorted, `Instant` is metadata). Keep it that way. The verifie
 
 - **`Scalar = f64`** — define `pub type Scalar = f64;` and use it everywhere; never re-introduce
   hard-coded `f32`. (f64 is for robustness; it is *not* the determinism lever.)
-- **Discrete rotations `{0, 90, 180, 270}`** → **hardcode the exact rotation matrices** (entries ∈
-  {0, ±1}). NO `sin_cos` on the placement path. (Continuous rotation, if ever added, must route
-  through the pure-Rust `libm` crate, behind a flag.)
+- **Discrete rotations `{0, 90, 180, 270}`.** Rotation trig routes through the pinned pure-Rust
+  `libm` crate (byte-identical across platforms) — **never std `sin_cos`/`sin`/`cos`/`atan2`**. As
+  of the Phase-1 fork this runs on the placement path (via `DTransformation::compose()` per placed
+  item) and is deterministic. The **optimizer should additionally build the exact cardinal matrices
+  (entries ∈ {0, ±1}) directly** on the placement path — for *exactness / cut-realizability* (zero
+  trig, no sub-ULP fuzz on placed coords), an optimization independent of the determinism `libm`
+  already guarantees. Continuous rotation, if ever added, must likewise route through `libm`.
 - **The min-separation offset must be deterministic.** jagua uses `geo-buffer::buffer_polygon_rounded`
   (arc joins, third-party) — **replace it** with our own deterministic offsetter (miter / pinned
-  arc) or vendor+pin it and prove bit-stability in the x-platform golden.
+  arc), or vendor it and swap its trig to `libm`, then prove bit-stability in the x-platform golden.
+  ⚠ **The Phase-1 audit found `geo-buffer 0.2` calls std `f64::sin`/`cos` internally — so registry
+  pinning alone is NOT sufficient.** Live only when `min_item_separation != 0`; until fixed, treat
+  nonzero-separation layouts as not-yet-byte-identical. (See `docs/00` §11 risk #2.)
 - **No RNG except our own seeded, portable PRNG** (e.g. `rand_pcg`/ChaCha). Explicit seed always; no
   `rand::random()` fallback, ever.
 - **No `rayon` / threads on any placement-deciding path.** Single canonical worker; if parallel, fix
@@ -47,8 +54,9 @@ import-only-then-resorted, `Instant` is metadata). Keep it that way. The verifie
 
 ## The fork
 
-- Upstream: **jagua-rs 0.7.2** (commit `43e8137`), MPL-2.0, Rust **edition 2024** (needs Rust ≥ 1.85).
-  All deps pure-Rust (no C / no `build.rs`) → clean cross-platform wheels.
+- Upstream: **jagua-rs 0.7.2** (commit `43e8137`), MPL-2.0, Rust **edition 2024**. Edition 2024 needs
+  Rust ≥ 1.85, but jagua's code uses `{int}::cast_signed/cast_unsigned` (stable 1.87) → **our MSRV
+  floor is 1.87** (toolchain pinned to 1.96). All deps pure-Rust (no C / no `build.rs`) → clean wheels.
 - **Fork ≈ 5,800 LOC** (see `docs/01` §B): all of `geometry/` (ex-SVG) + `collision_detection/` +
   `entities/` + `io/import.rs`+`ext_repr.rs`+`export.rs` + `probs/bpp/` + `util/fpa.rs`. **Skip**
   `io/svg/`, `probs/spp`+`mspp`, and the `lbf` binary (read `lbf` only for the
@@ -59,18 +67,22 @@ import-only-then-resorted, `Instant` is metadata). Keep it that way. The verifie
 - MPL-2.0 is **uniform across this whole repo**: keep MPL headers on forked files, publish our
   modifications; new crates are MPL-2.0 too.
 
-## Architecture / recommended crate split (finalize at scaffold time)
+## Architecture / crate split (FINALIZED — Phase 1 landed it)
 
 ```
-crates/core       forked jagua geometry + CDE + entities + io + bpp, at f64, determinism-scrubbed
+crates/geo        forked jagua geometry primitives + transforms + fail-fast + shape_modification +
+                  fpa, at f64. The geometry LEAF (no deps on entities/io/cde).
+crates/cde        forked jagua CDE + quadtree + hazards + entities + io + probs/bpp + assertions, at
+                  f64. Depends on geo; re-exports it as `geometry` (`pub use ironnest_geo as
+                  geometry`) so upstream `crate::geometry::*` paths resolve unchanged.
 crates/optimizer  OUR deterministic placement search (lifts sparrow's separator math, MIT — no link)
 crates/ironnest   the public API:  nest(items, container, min_sep, rotations, seed, budget) -> [Placement]
 crates/py         PyO3 binding -> the `ironnest` wheel (abi3-py313)
 benches/  tests/   density + the cross-platform determinism golden
 .github/           cibuildwheel (Win-x64 + macOS-arm64 + linux) -> PyPI; the x-platform golden gate
 ```
-(A simpler `core` + `optimizer` + `py` split is fine to start; the public `nest()` can live in
-`optimizer`.)
+
+(The public `nest()` API can live in `optimizer` initially, then graduate to `crates/ironnest`.)
 
 ## Build / dev
 
