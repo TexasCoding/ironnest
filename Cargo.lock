@@ -125,14 +125,14 @@ dependencies = [
 
 [[package]]
 name = "ironnest"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "ironnest-optimizer",
 ]
 
 [[package]]
 name = "ironnest-cde"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "float-cmp",
@@ -145,7 +145,7 @@ dependencies = [
 
 [[package]]
 name = "ironnest-geo"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "float-cmp",
@@ -161,7 +161,7 @@ dependencies = [
 
 [[package]]
 name = "ironnest-optimizer"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "insta",
  "ironnest-cde",
@@ -171,7 +171,7 @@ dependencies = [
 
 [[package]]
 name = "ironnest-py"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "ironnest",
  "pyo3",

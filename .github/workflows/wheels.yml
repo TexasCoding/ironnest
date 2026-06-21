@@ -53,6 +53,10 @@ jobs:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
           sccache: "true"
+          # The job-level `env:` reaches the native macOS/Windows builds, but NOT the manylinux
+          # Docker container — forward IRONNEST_GIT_SHA into it explicitly so `option_env!` stamps
+          # the linux wheel's `__commit__` (no-op on the non-container mac/win runs).
+          docker-options: -e IRONNEST_GIT_SHA=${{ github.sha }}
 
       - name: Install the wheel and run the Python tests
         shell: bash
