@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(cargo build:*)",
+      "Bash(cargo check:*)",
+      "Bash(cargo test:*)",
+      "Bash(cargo nextest:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo fmt:*)",
+      "Bash(cargo bench:*)",
+      "Bash(cargo doc:*)",
+      "Bash(cargo tree:*)",
+      "Bash(cargo metadata:*)",
+      "Bash(cargo deny:*)",
+      "Bash(cargo insta:*)",
+      "Bash(cargo expand:*)",
+      "Bash(rustc:*)",
+      "Bash(rustup:*)",
+      "Bash(rust-analyzer:*)",
+      "Bash(maturin:*)"
+    ],
+    "deny": [
+      "Bash(rm -rf /:*)",
+      "Bash(rm -rf ~:*)",
+      "Bash(curl:* | sh)",
+      "Bash(curl:* | bash)"
+    ]
+  },
+  "env": {
+    "CARGO_TERM_COLOR": "always",
+    "RUST_BACKTRACE": "1"
+  },
+  "enabledPlugins": {
+    "rust-analyzer-lsp@claude-plugins-official": true
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && command -v cargo >/dev/null 2>&1 && [ -f Cargo.toml ] && cargo fmt --quiet 2>/dev/null; true",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" || exit 0; command -v cargo >/dev/null 2>&1 || exit 0; [ -f Cargo.toml ] || exit 0; cargo clippy --all-targets -- -D warnings",
+            "timeout": 180
+          }
+        ]
+      }
+    ]
+  }
+}

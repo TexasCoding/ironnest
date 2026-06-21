@@ -1,0 +1,58 @@
+# clippy.toml — mechanically enforce ironnest's determinism prime directive.
+#
+# This turns the "determinism rules" in CLAUDE.md from prose into a FAILING BUILD.
+# Enforced by `cargo clippy -- -D warnings` (the Stop hook in .claude/settings.json + CI).
+# Inert until there is Rust to lint; active the moment crates exist.
+#
+# `disallowed_types` / `disallowed_methods` are configurable Clippy lints. Each forked crate
+# should also carry `#![warn(clippy::disallowed_types, clippy::disallowed_methods)]` so the gate
+# fires regardless of the lint's default level.
+
+# --- Non-deterministic collections (per-process random iteration order) -----------------------
+disallowed-types = [
+    { path = "std::collections::HashMap", reason = "non-deterministic iteration order — use BTreeMap or slotmap (CLAUDE.md determinism rules)" },
+    { path = "std::collections::HashSet", reason = "non-deterministic iteration order — use BTreeSet" },
+]
+
+disallowed-methods = [
+    # --- Wall-clock must NEVER influence a placement decision (metadata only) -----------------
+    { path = "std::time::Instant::now",    reason = "wall-clock is metadata only, never a placement input; stamp time_stamp to a constant" },
+    { path = "std::time::SystemTime::now", reason = "wall-clock is metadata only, never a placement input" },
+
+    # --- FMA / fused ops fuse differently per platform → breaks byte-identity -----------------
+    { path = "f32::mul_add", reason = "FMA fuses platform-divergently; use a * b + c (basic + - * / sqrt powi only)" },
+    { path = "f64::mul_add", reason = "FMA fuses platform-divergently; use a * b + c" },
+
+    # --- Transcendentals route through the platform C libm (glibc/MSVCRT/Darwin differ in ULPs) -
+    # Discrete rotations {0,90,180,270} need ZERO trig (hardcoded {0,±1} matrices). Any continuous
+    # math must route through the PINNED pure-Rust `libm` crate — never these std methods.
+    { path = "f32::sin_cos", reason = "platform libm, not portable — hardcode 0/90/180/270 matrices or use pinned `libm`" },
+    { path = "f64::sin_cos", reason = "platform libm, not portable — hardcode 0/90/180/270 matrices or use pinned `libm`" },
+    { path = "f32::sin",   reason = "platform libm, not portable — use pinned `libm`" },
+    { path = "f64::sin",   reason = "platform libm, not portable — use pinned `libm`" },
+    { path = "f32::cos",   reason = "platform libm, not portable — use pinned `libm`" },
+    { path = "f64::cos",   reason = "platform libm, not portable — use pinned `libm`" },
+    { path = "f32::tan",   reason = "platform libm, not portable — use pinned `libm`" },
+    { path = "f64::tan",   reason = "platform libm, not portable — use pinned `libm`" },
+    { path = "f32::atan2", reason = "platform libm, not portable — use pinned `libm`" },
+    { path = "f64::atan2", reason = "platform libm, not portable — use pinned `libm`" },
+    { path = "f32::powf",  reason = "transcendental (platform libm) — use powi for integer exponents, or pinned `libm`" },
+    { path = "f64::powf",  reason = "transcendental (platform libm) — use powi for integer exponents, or pinned `libm`" },
+    { path = "f32::exp",   reason = "platform libm, not portable — use pinned `libm`" },
+    { path = "f64::exp",   reason = "platform libm, not portable — use pinned `libm`" },
+    { path = "f32::ln",    reason = "platform libm, not portable — use pinned `libm`" },
+    { path = "f64::ln",    reason = "platform libm, not portable — use pinned `libm`" },
+
+    # --- Implicit/global RNG — we own seeding (explicit seed + portable PRNG) -----------------
+    # Uncomment each once the crate is actually in the dependency graph (an unresolved path here
+    # produces a Clippy config warning, so they stay commented until then):
+    # { path = "rand::random",     reason = "no implicit RNG; explicit seed + portable PRNG (rand_pcg/ChaCha) only" },
+    # { path = "rand::thread_rng", reason = "thread RNG is non-deterministic; seed explicitly" },
+]
+
+# ALSO (not expressible as lints, enforced by review / the determinism-auditor agent):
+#   • Never build with `-C target-cpu=native` — it tunes codegen to the BUILD machine, diverging
+#     across the macOS-arm64 / Windows-x64 / linux-x64 fleet. Pin target-cpu identically in CI.
+#   • Forbid the `f*_algebraic` intrinsics / `float_algebraic` ops once they stabilize — they are
+#     DEFINED as non-deterministic.
+#   • No `rayon` / `par_*` on any placement-deciding path (import-time par_iter re-sorted by id OK).

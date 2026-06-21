@@ -80,6 +80,30 @@ benches/  tests/   density + the cross-platform determinism golden
   `aarch64-apple-darwin`, `x86_64-unknown-linux-gnu`; publish via PyPI Trusted Publishing (OIDC).
 - `cargo deny` (license allowlist) + a CycloneDX SBOM in CI.
 
+## Claude Code workspace (how the rules above are made mechanical)
+
+The repo is wired so the determinism rules are enforced, not just remembered:
+
+- **`clippy.toml`** bans the hazards as lints — `HashMap`/`HashSet`, `Instant`/`SystemTime::now`,
+  `mul_add`, and the std transcendentals (`sin_cos`/`sin`/`cos`/`tan`/`atan2`/`powf`/`exp`/`ln`).
+  Enforced by `cargo clippy -- -D warnings`. Uncomment the `rand::*` entries once `rand` is a dep;
+  add `#![warn(clippy::disallowed_types, clippy::disallowed_methods)]` to each forked crate root.
+- **`rust-toolchain.toml`** pins rustc (1.96.0) + clippy/rustfmt/rust-analyzer/rust-src via **rustup**
+  (not Homebrew rust — that can't pin and would drift on `brew upgrade`). Bump deliberately and
+  re-bless goldens; never implicitly.
+- **`.claude/settings.json`** — cargo command allowlist (fewer prompts), a `PostToolUse` `cargo fmt`,
+  a `Stop` `cargo clippy -- -D warnings` gate (both no-op until a `Cargo.toml` exists), and enables
+  the `rust-analyzer-lsp` plugin so diagnostics surface after every edit.
+- **`.claude/agents/determinism-auditor.md`** — delegate a full hazard sweep before merging.
+- **`.claude/agents/rust-reviewer.md`** — fork-aware quality / idiom / MPL review.
+- **`/rust-determinism-audit`** skill — fast inline grep + clippy sweep.
+
+One-time local setup: rustup (not brew rust) → `/plugin install rust-analyzer-lsp@claude-plugins-official`
+(needs the `rust-analyzer` binary on PATH; the toolchain file installs it). For the cross-platform
+golden use `cargo insta` snapshots of the **solver output** (`item,x,y,rotation`) — never hash the
+wheel/binary (cross-platform binaries are never byte-identical; only the placement output is the
+contract). Never build with `-C target-cpu=native`.
+
 ## Consumer & tracking
 
 - Consumer: `drawing_and_gcode` (the plasma CAD/CAM app, Python), at

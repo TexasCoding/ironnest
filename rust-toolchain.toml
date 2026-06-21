@@ -1,0 +1,14 @@
+# Pin the toolchain — reproducible builds depend on a FIXED rustc (plan §11, risk #4).
+#
+# jagua-rs is edition 2024 → needs Rust ≥ 1.85. We pin an EXACT version (not "stable") so the
+# cross-platform determinism golden is reproducible and your local dev compiler matches CI.
+# Bump deliberately — and re-bless the goldens when you do — never implicitly via a system upgrade.
+#
+# This is a rustup feature: with rustup installed, the first cargo command in this repo
+# auto-installs 1.96.0 + the components below (including the rust-analyzer the LSP plugin needs).
+[toolchain]
+channel    = "1.96.0"
+components = ["rustfmt", "clippy", "rust-analyzer", "rust-src"]
+profile    = "minimal"
+# Cross-compile targets live in CI (maturin / cibuildwheel), added there with `rustup target add`:
+#   x86_64-pc-windows-msvc · aarch64-apple-darwin · x86_64-unknown-linux-gnu
