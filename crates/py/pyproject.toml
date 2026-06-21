@@ -1,0 +1,39 @@
+# maturin packaging for the `ironnest` wheel (PyO3, abi3-py313 — one wheel per platform serves all
+# CPython 3.13+). Build:  maturin build --release -m crates/py/Cargo.toml
+# Dev loop:               cd crates/py && maturin develop --release   →   import ironnest
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "ironnest"
+description = "Deterministic, embeddable, true-shape 2D nesting engine for irregular parts"
+requires-python = ">=3.13"
+license = { text = "MPL-2.0" }
+readme = "README.md"
+authors = [{ name = "Jeff West", email = "jeffw10278@proton.me" }]
+keywords = ["nesting", "packing", "2d", "irregular", "deterministic", "cnc", "plasma", "cutting"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.13",
+    "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Topic :: Scientific/Engineering",
+    "Intended Audience :: Manufacturing",
+    "Intended Audience :: Developers",
+]
+# The version is read from the crate's Cargo.toml (workspace version).
+dynamic = ["version"]
+
+[project.urls]
+Repository = "https://github.com/TexasCoding/ironnest"
+
+[tool.maturin]
+# The Python import name / abi3 init symbol; matches `[lib] name` in Cargo.toml.
+module-name = "ironnest"
+manifest-path = "Cargo.toml"
+# abi3-py313 is set via the pyo3 feature in Cargo.toml — one forward-compatible wheel per platform.

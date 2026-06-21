@@ -1,0 +1,37 @@
+# cargo-deny — supply-chain gate (Phase 4). License allowlist + advisory/yank checks, run in CI by
+# .github/workflows/supply-chain.yml. ironnest itself is MPL-2.0; every dependency must carry a
+# license on this permissive allowlist (no surprise copyleft creeping into the shipped wheel).
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+# ignore = []   # add `RUSTSEC-…` ids here (with a justification) only when unavoidable.
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+allow = [
+    "MPL-2.0",                       # ironnest + the jagua-rs fork
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "Zlib",                          # slotmap
+    "ISC",
+    "Unicode-3.0",                   # unicode-ident (newer)
+    "Unicode-DFS-2016",              # unicode-ident (older)
+    "CC0-1.0",
+]
+
+[bans]
+multiple-versions = "warn"           # surfaced, not fatal — a clean tree is the goal, not a gate
+wildcards = "allow"                  # our `"1"`-style requirements resolve via the committed Cargo.lock
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

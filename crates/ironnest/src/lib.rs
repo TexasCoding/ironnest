@@ -9,27 +9,13 @@
 //!
 //! The engine knows **nothing** about kerf, lead-ins, pierces, cut sequencing, G-code, or any
 //! machine number — those live in the consumer, which re-validates every layout. Same inputs MUST
-//! produce byte-identical placements on every shipped platform. See
-//! `docs/00-ironnest-architecture-and-plan.md` §7.
+//! produce byte-identical placements on every shipped platform (proven by the cross-platform CI
+//! golden — see `docs/00-ironnest-architecture-and-plan.md` §6/§7).
+//!
+//! This crate is the **stable public surface** that `crates/py` (the `ironnest` wheel) and Rust
+//! embedders depend on; the implementation lives in [`ironnest_optimizer`] (the deterministic
+//! placement search, sitting on `ironnest-cde` + `ironnest-geo`, the f64 fork of jagua-rs). Phase 2
+//! grew the real [`nest`] there; this crate graduates it to the public name.
 
-use ironnest_optimizer::Scalar;
-
-/// A single resolved placement — the only thing the oracle emits.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Placement {
-    /// Index into the caller's input item list.
-    pub item: usize,
-    /// Placement origin X, in the container's coordinate space.
-    pub x: Scalar,
-    /// Placement origin Y, in the container's coordinate space.
-    pub y: Scalar,
-    /// Rotation in degrees; always a member of the caller's allowed set (e.g. {0, 90, 180, 270}).
-    pub rotation_deg: Scalar,
-}
-
-// TODO(Phase 2): the real entry point. This stub keeps the workspace green; the full signature
-//
-//     pub fn nest(items, qty, container, min_sep, rotations, seed, budget) -> NestSolution
-//
-// lands once the geo/cde types (Polygon, Container) exist. Determinism contract: explicit seed,
-// fixed iteration budget (no wall clock), discrete rotations only, no `rand::random()` fallback.
+#[doc(inline)]
+pub use ironnest_optimizer::{NestSolution, Placement, Scalar, nest};

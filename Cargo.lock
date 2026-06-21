@@ -258,6 +258,7 @@ dependencies = [
 name = "ironnest-py"
 version = "0.0.0"
 dependencies = [
+ "ironnest",
  "pyo3",
 ]
 

@@ -16,6 +16,8 @@ crate-type = ["cdylib"]
 # pyo3 macro expansion would otherwise risk false positives in the binding layer.
 
 [dependencies]
-# ironnest = { package = "ironnest", path = "../ironnest" }  # Phase 4: rename to avoid clashing
-#                                                              # with this crate's `ironnest` lib name
+# The public façade crate (package `ironnest`) — renamed locally to `ironnest_core` so its lib name
+# does not clash with THIS crate's `[lib] name = "ironnest"` (the Python import name / abi3 init
+# symbol `PyInit_ironnest`).
+ironnest_core = { package = "ironnest", path = "../ironnest" }
 pyo3 = { workspace = true }

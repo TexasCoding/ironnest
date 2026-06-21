@@ -322,8 +322,16 @@ is the spike's jagua number.
   in CI rather than assumed. (Locally: same-platform debug == release == blessed snapshot.) `min_sep=0`
   keeps the corpus inside the proven-deterministic envelope (the geo-buffer offset, risk #2, is still
   not byte-stable). 37 tests green. (5) the consumer `.CNC` sha256 golden stays `drawing_and_gcode`'s.
-- **Phase 4 — PyO3 wheel + CI.** `crates/py`, maturin + cibuildwheel → PyPI (Win-x64, macOS-arm64,
-  linux), abi3-py313, committed `Cargo.lock`, `cargo deny` + SBOM.
+- **Phase 4 — PyO3 wheel + CI. ✅ DONE (2026-06-21).** The public Rust API graduated to
+  `crates/ironnest` (a thin façade re-exporting `nest`/`Placement`/`NestSolution` from the optimizer);
+  `crates/py` binds it through one `#[pyfunction] nest(...)` marshalling plain
+  `list[list[tuple[float,float]]]` (no numpy/JSON) → `(placements, unplaced)`. abi3-py313 (one wheel
+  per platform serves CPython 3.13+). Packaged with maturin (`pyproject.toml`); built/tested **locally
+  on macOS-arm64** (`import ironnest`, 5 pytest incl. byte-identical determinism + the interlock).
+  `.github/workflows/wheels.yml` builds + installs + pytests the wheel on **Win-x64 + macOS-arm64 +
+  linux-x64** via maturin (the maturin-action wraps the same machinery as cibuildwheel) + an sdist +
+  an inert-until-tag OIDC Trusted-Publishing job; `.github/workflows/supply-chain.yml` runs
+  `cargo deny` (license allowlist in `deny.toml`) + a CycloneDX SBOM. Committed `Cargo.lock`.
 - **Phase 5 — Consumer integration** (`drawing_and_gcode` #258): adapter, remove Python engines,
   audit sidecar, overlay/dry-run still gate the torch.
 - **Phase 6 — Interior-void & multi-sheet polish** (subsumes #257's geometry).
