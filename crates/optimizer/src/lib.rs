@@ -28,6 +28,7 @@ mod improve;
 mod loss;
 mod prng;
 mod search;
+mod sep;
 
 pub use ironnest_geo::Scalar;
 pub use prng::Prng;
@@ -186,6 +187,18 @@ pub fn nest(
         &mut prng,
         budget,
         IMPROVE_ROUNDS,
+        &mut placed_per_type,
+    );
+
+    // Separation search (Phase 2b): for any still-unplaced part, allow overlap then shove neighbours
+    // apart (sparrow GLS) to discover interlocking arrangements greedy construction cannot reach. A
+    // no-op when everything already placed, so the dense rectangular cases pay nothing.
+    sep::run_separation(
+        &mut layout,
+        &entities,
+        &order,
+        qty,
+        &mut prng,
         &mut placed_per_type,
     );
 

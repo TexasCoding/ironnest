@@ -1,15 +1,17 @@
 # ironnest optimizer — design & the separation search (Phase 2b)
 
-**Status:** Phase 2a (constructive + compaction nester) ✅ shipped (`ed8ba72`). Phase 2b (the
-overlap-minimization **separation search** for irregular-part density) is **next** and is what this
-document specs out. Read [`00-…`](00-ironnest-architecture-and-plan.md) (the plan) and
-[`01-…`](01-jagua-source-verification.md) (the fork grounding) first.
+**Status:** Phase 2a (constructive + compaction nester) ✅ shipped (`ed8ba72`). **Phase 2b (the
+overlap-minimization separation search) ✅ shipped** — sparrow's GLS ported deterministically into
+`crates/optimizer/src/sep/`. This document is the design spec; §10 records what actually landed and
+how it deviates from the plan below. Read [`00-…`](00-ironnest-architecture-and-plan.md) (the plan)
+and [`01-…`](01-jagua-source-verification.md) (the fork grounding) first.
 
-> **One-line orientation for a fresh session:** the engine already nests rectangular parts at
-> **87–99%** (beats target). Irregular parts sit at **~65%** because greedy construction can't
-> *discover* interlocking arrangements. The fix is sparrow's overlap-minimization **Guided Local
-> Search (GLS)**, ported to our deterministic loop. A naive version was attempted this session and
-> **reverted** — §3 explains exactly why it failed and §4 is the algorithm that works.
+> **One-line orientation for a fresh session:** the engine nests rectangular parts at **92–99%**
+> (beats target). Irregular parts were stuck at **~65%** because greedy construction can't *discover*
+> interlocking arrangements. The fix — sparrow's overlap-minimization **Guided Local Search (GLS)**,
+> ported to our deterministic loop — shipped and lifted irregular density (pentagon **65 → 79 %**,
+> bricks **87 → 92 %**) and now *discovers interlocks greedy cannot* (two right-triangles pair into a
+> square, **2/2**). §3 records the earlier failed attempt; §4 is the algorithm; **§10 is what shipped.**
 
 ---
 
@@ -306,6 +308,59 @@ not a compile):
   HashMap) so the pole set is byte-identical cross-platform. (`geo/.../fail_fast/pole.rs`.)
 - **Umetani 2009** weight rule (paywalled) — free preprint exists if the exact increment is needed;
   sparrow's rule (§4.2) is the practical one to implement.
+
+---
+
+## 10. What shipped (Phase 2b as built)
+
+The PRIMARY path (§7.1, proxy-driven GLS) landed in `crates/optimizer/src/sep/`. Layered leaf→root:
+`proxy.rs` (§4.1) → `tracker.rs` (§4.2, `PairMatrix` + GLS weights) → `evaluator.rs` (§4.3 sample
+eval) → `search.rs` (§4.3 sampler + best-samples + coordinate descent) → `separator.rs` (§4.4 strike
+loop) → `mod.rs` (§4.5 **insertion driver**). Wired into `lib.rs::nest` after `improve()`, gated
+naturally (a no-op when nothing is unplaced, so dense rectangular cases pay nothing). 35 tests pass;
+`cargo clippy --workspace -- -D warnings` clean.
+
+**Results** (`examples/density.rs`, release): 13×7 bricks **87 → 92 %**, pentagon **65 → 79 %**, and a
+new interlock probe — two right-triangles that must pair into a square — places **2/2 (82.6 %)**,
+proving the separator discovers arrangements greedy construction cannot. (Rectangular 7×7 / 10×10
+stay at 96 / 99 %.) Budgets are sparrow's separator defaults, scaled up modestly (`SEP_CONFIG`:
+80+40 samples, 150 no-improve iters, 4 strikes; 400 seed samples) — all fixed integers. An in-process
+determinism test on the separation path
+(`separation_search_is_deterministic_and_finds_interlock`) and per-function unit tests on the
+determinism-critical primitives (`calc_idx`, `update_weights`, `BestSamples`, `SampleEval`,
+`Prng::shuffle`) lock the port.
+
+**Deviations from the plan above (and why):**
+- **Move = remove-item-first**, then search the reduced layout, then place — instead of sparrow's
+  keep-in-place + self-exclude (§4.3). Same effect, simpler; the tracker still holds the moved item's
+  weight row (keyed by its pre-move `PItemKey`) for the evaluator to read during the search.
+- **No `upper_bound` early-bailout** (§4.3 step 3). The evaluator uses `collect_poly_collisions` +
+  a **canonical sorted-`HazKey` summation** instead — robustness (byte-identical regardless of CDE
+  traversal order) over the constant-factor speedup. The specialized early-terminate pipeline remains
+  a future perf option (it carries a cross-platform ULP-edge risk near the bound).
+- **No two-item swap inside the separator.** Faithful to sparrow's `separator.rs::separate`, which
+  only rolls back to the incumbent and keeps GLS weights between strikes; the swap lives in sparrow's
+  *explore* loop, which our fixed-container insertion driver replaces. The GLS weights are the
+  diversifier. (A swap-on-retry is a future density lever — §4.5 "richer driver".)
+- **Unplaceable-pose guard:** the coordinate descent moves freely in x/y, so it can wander a part
+  outside the quadtree root bbox; `evaluate_sample` returns `SampleEval::Invalid` (worst rank) for
+  any pose whose bbox is not `Surrounding`-related to `cde().bbox()`, so the search never *returns*
+  one. (Without this, `place_item` registers a hazard outside all quadrants → debug-assert panic /
+  release CDE-invariant corruption. Found by the post-merge adversarial review.) For irregular
+  containers the inflated-square quadtree leaves a margin, so in-bbox-outside-container poses are
+  still scored as `Exterior` collisions and remain usable; only truly unplaceable poses are rejected.
+
+**Determinism adaptations actually used** (per §5): `Scalar`=f64 throughout; single worker (no
+rayon); fixed `strike_limit × iter_no_imprv_limit` + fixed sample/coord-descent counts (no clock);
+vendored PCG64 for every draw + a Fisher–Yates `Prng::shuffle` for the colliding-item order; **no
+Wiggle** (discrete rotations, no continuous trig); `SampleEval` ordering via exact `Scalar::total_cmp`
+(deterministic total order, replaces sparrow's `FPA`-fuzzy compare — changes tie-breaks vs sparrow);
+canonical summation everywhere a float reduction feeds a decision (tracker dense-index sums; evaluator
+sorted-`HazKey` sums). `BTreeSet`/`SecondaryMap`/`slotmap` only.
+
+**Next levers if irregular density needs more:** tune the fixed budgets up (`SEP_CONFIG`); add the
+swap-on-retry / "place-all-then-separate" richer driver (§4.5); only then consider the exact-NFP
+penetration refinement (§7.2). The cross-platform golden (Phase 3) is the final determinism proof.
 
 ## References
 - sparrow — `https://github.com/JeroenGar/sparrow` · paper arXiv `2509.13329`.

@@ -102,6 +102,16 @@ impl Prng {
         }
         (m >> 64) as usize
     }
+
+    /// In-place Fisher–Yates shuffle, drawing swap indices from the stream. Deterministic for a given
+    /// stream and slice length — used to randomize the order colliding parts are moved.
+    pub fn shuffle<T>(&mut self, slice: &mut [T]) {
+        // Iterate high→low, swapping each element with a uniformly-chosen earlier-or-equal index.
+        for i in (1..slice.len()).rev() {
+            let j = self.below(i + 1);
+            slice.swap(i, j);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -143,5 +153,24 @@ mod tests {
             seen[i] = true;
         }
         assert!(seen.iter().all(|&s| s), "all 4 indices should appear");
+    }
+
+    #[test]
+    fn shuffle_is_deterministic_and_a_permutation() {
+        let mut a: Vec<u32> = (0..50).collect();
+        let mut b = a.clone();
+        Prng::seed_from_u64(123).shuffle(&mut a);
+        Prng::seed_from_u64(123).shuffle(&mut b);
+        assert_eq!(a, b, "same seed → same permutation");
+
+        // The result is a permutation of the input (no elements lost/duplicated).
+        let mut sorted = a.clone();
+        sorted.sort_unstable();
+        assert_eq!(sorted, (0..50).collect::<Vec<_>>());
+
+        // A different seed gives a different order (overwhelmingly likely for 50 elements).
+        let mut c: Vec<u32> = (0..50).collect();
+        Prng::seed_from_u64(124).shuffle(&mut c);
+        assert_ne!(a, c);
     }
 }

@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 ironnest-geo = { workspace = true }
 ironnest-cde = { workspace = true }
+slotmap   = "1.0"   # deterministic keyed storage — `SecondaryMap` for the separation tracker (matches cde)
 # Deliberately NO `rand`/`rand_pcg`: the placement PRNG is a small, self-contained PCG64 (see
 # `prng.rs`) so the exact bit-stream is version-independent and byte-stable forever — determinism is
 # the product. No threads, no wall-clock, no external RNG.

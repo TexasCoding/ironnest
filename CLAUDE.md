@@ -11,9 +11,10 @@ source-verified fork grounding), and [`docs/02-optimizer-and-separation-search.m
 (the optimizer design + the next build: the separation search). They are the source of truth; this
 file is the short version.
 
-**Status (2026-06-21):** Phase 1 (fork→f64) ✅ · Phase 2a (constructive+compaction nester, 87–99% on
-rectangular parts) ✅ · **Next: Phase 2b — the overlap-minimization separation search** for irregular
-density (full GLS or an accurate MTV penetration measure — see `docs/02`). See `docs/00` §10.
+**Status (2026-06-21):** Phase 1 (fork→f64) ✅ · Phase 2a (constructive+compaction nester, 92–99% on
+rectangular parts) ✅ · Phase 2b (sparrow GLS **separation search**, `crates/optimizer/src/sep/`;
+irregular density pentagon 65→79 %, bricks 87→92 %, discovers interlocks — see `docs/02` §10) ✅ ·
+**Next: Phase 3 — the cross-platform determinism golden** (the byte-identical CI gate). See `docs/00` §10.
 
 ## ⛔ Two prime directives
 

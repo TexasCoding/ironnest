@@ -67,4 +67,12 @@ fn main() {
         [0.0, 20.0],
     ];
     probe("pentagon ~344", pentagon, 344.0, 40, 100.0, 4000);
+
+    println!("--- interlocking (separation search must discover) ---");
+    // Two right triangles pair into a 10x10 square. Their bounding boxes are both 10x10, so two
+    // cannot fit in an 11x11 container side-by-side — the ONLY way both fit is the interlocked
+    // pairing (one rotated 180°). Greedy construction places just one; the separation search has to
+    // rearrange to discover the pair. ~82.6% util iff both placed; ~41% if only one.
+    let right_tri = vec![[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]];
+    probe("2 right-tris pair->sq", right_tri, 50.0, 2, 11.0, 4000);
 }

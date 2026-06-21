@@ -60,6 +60,45 @@ fn determinism_same_seed_is_byte_identical() {
 }
 
 #[test]
+fn separation_never_hands_place_item_an_out_of_bounds_pose() {
+    // Regression: the GLS coordinate descent moves a part freely in x/y, so without an in-bounds
+    // guard it could return a pose poking outside the quadtree root bbox — which `place_item` then
+    // registers, tripping the CDE constrict assertion (qt_hazard.rs) in a debug build. This exact
+    // case panicked before the `SampleEval::Invalid`-for-unplaceable guard in the evaluator.
+    // Reaching the assertions below (no panic) is the test; feasibility is a sanity check.
+    let items = vec![rect(10.0, 10.0)];
+    let sol = nest(&items, &[12], &rect(25.0, 25.0), 0.0, &CARDINAL, 0, 1500);
+    assert!(
+        sol.placements.len() >= 4,
+        "at least the 2×2 grid of 10×10 squares must place in 25×25, got {}",
+        sol.placements.len()
+    );
+}
+
+#[test]
+fn separation_search_is_deterministic_and_finds_interlock() {
+    // Two right triangles pair into a 10×10 square; their 10×10 bboxes can't both fit in 11×11
+    // side-by-side, so the only way both place is the interlocked pairing — which greedy
+    // construction misses and the GLS separation search must discover. This exercises the whole
+    // separation stack (seed sampler, coordinate descent, colliding-item shuffle, GLS tracker), so
+    // byte-identity across two same-seed runs proves that stack is reproducible.
+    let tri = vec![[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]];
+    let items = std::slice::from_ref(&tri);
+    let container = rect(11.0, 11.0);
+    let a = nest(items, &[2], &container, 0.0, &CARDINAL, 42, 3000);
+    let b = nest(items, &[2], &container, 0.0, &CARDINAL, 42, 3000);
+    assert_eq!(
+        a, b,
+        "the separation path must be byte-identical for the same seed"
+    );
+    assert_eq!(
+        a.placements.len(),
+        2,
+        "separation should interlock both triangles into the square"
+    );
+}
+
+#[test]
 fn min_separation_path_still_places() {
     // Exercises the geo-buffer min-sep offset (the documented residual) on the placement path.
     // Four 10×10 parts with 5.0 separation (→ ~15×15 footprint) easily fit in 100×100.
