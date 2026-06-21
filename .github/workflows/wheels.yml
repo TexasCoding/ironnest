@@ -28,6 +28,12 @@ jobs:
           - { os: macos-14, target: aarch64 }
           - { os: windows-latest, target: x64 }
     runs-on: ${{ matrix.os }}
+    # Read at compile time by `option_env!("IRONNEST_GIT_SHA")` in crates/py/src/lib.rs to stamp the
+    # wheel's `__commit__` provenance attribute (the consumer's per-cut audit sidecar). github.sha is
+    # the exact commit that triggered the run — for a v* tag, the tagged commit. It is metadata only
+    # and never enters the placement path, so it cannot affect the determinism contract.
+    env:
+      IRONNEST_GIT_SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
 
@@ -53,7 +59,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip pytest
           python -m pip install ironnest --no-index --find-links dist --force-reinstall
-          python -c "import ironnest; print('ironnest', ironnest.__version__)"
+          python -c "import ironnest, os; print('ironnest', ironnest.__version__, 'fork', ironnest.__jagua_fork_rev__, 'commit', ironnest.__commit__); assert ironnest.__jagua_fork_rev__ == '43e8137'; assert ironnest.__commit__ == os.environ.get('IRONNEST_GIT_SHA', ''), ('__commit__ not stamped from build SHA: ' + ironnest.__commit__)"
           pytest crates/py/tests -q
 
       - uses: actions/upload-artifact@v4

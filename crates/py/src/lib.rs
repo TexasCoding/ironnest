@@ -36,11 +36,18 @@ type PySheet = (Vec<[f64; 2]>, Vec<Vec<[f64; 2]>>);
 ///     defects, or (to "nest inside a part") the solid region of an already-placed part. ``[]`` for
 ///     none.
 /// min_sep : float
-///     Minimum separation between any two parts (and part↔boundary); ``0.0`` disables it.
-///     NOTE: nonzero separation is not yet byte-identical across platforms (the offsetter still
-///     uses non-portable trig), so keep it ``0.0`` where reproducibility is required.
+///     Minimum separation enforced part↔part, part↔boundary, and part↔hole; ``0.0`` disables it.
+///     Any value is fully cross-platform byte-identical: the separation offset is computed by the
+///     vendored straight-skeleton offsetter with all trig routed through ``libm`` (a nonzero-
+///     ``min_sep`` case is in the cross-platform determinism golden). A production part gap is the
+///     intended use — there is no reproducibility reason to keep it ``0.0``.
 /// rotations : list[float]
 ///     Allowed discrete orientations in degrees (e.g. ``[0, 90, 180, 270]``); empty ⇒ no rotation.
+///     Every listed angle is applied cross-platform-deterministically — the rotation trig routes
+///     through ``libm`` (byte-identical on every target), so a non-cardinal angle like ``45`` is
+///     just as reproducible. The cardinal set ``{0, 90, 180, 270}`` is nonetheless recommended:
+///     those orientations also yield coordinate-exact placements (integer rotation matrix, no
+///     sub-ULP trig fuzz), which is the cleanest input for a cut-realizable audit trail.
 /// seed : int
 ///     Explicit PRNG seed. There is **no** entropy fallback — determinism is the contract.
 /// budget : int
@@ -152,6 +159,16 @@ fn nest_multi(
 #[pymodule]
 fn ironnest(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    // Build provenance for the consumer's per-cut audit sidecar (issue #258 `engine{}` block): the
+    // upstream jagua-rs commit this CDE was forked from, and this wheel's own build commit. Both are
+    // metadata strings that never touch the placement path — they do not affect the determinism
+    // contract. `__commit__` is injected by CI via the `IRONNEST_GIT_SHA` env (`option_env!` reads it
+    // at compile time — no `build.rs`, per CLAUDE.md); local/sdist builds without it read "unknown".
+    m.add("__jagua_fork_rev__", "43e8137")?; // upstream jagua-rs 0.7.2 base — see docs/01
+    m.add(
+        "__commit__",
+        option_env!("IRONNEST_GIT_SHA").unwrap_or("unknown"),
+    )?;
     m.add_function(wrap_pyfunction!(nest, m)?)?;
     m.add_function(wrap_pyfunction!(nest_multi, m)?)?;
     Ok(())
