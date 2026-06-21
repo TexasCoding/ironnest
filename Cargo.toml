@@ -5,7 +5,7 @@ resolver = "3"
 members  = ["crates/geo", "crates/cde", "crates/optimizer", "crates/ironnest", "crates/py"]
 
 [workspace.package]
-version      = "0.1.0"      # first tagged release (alpha) — bump deliberately, re-bless goldens
+version      = "0.1.1"      # bump deliberately; re-bless goldens if placement code changed
 edition      = "2024"       # jagua-rs lineage; edition 2024 needs Rust ≥ 1.85
 rust-version = "1.87"       # MSRV floor: jagua's forked code uses {integer}::cast_signed/cast_unsigned
                             # (stable 1.87). We build on the pinned 1.96.0 — see rust-toolchain.toml.
