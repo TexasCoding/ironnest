@@ -369,8 +369,13 @@ is the spike's jagua number.
    x-platform CI golden now carries a nonzero-`min_sep` case (`separated-squares`) as the standing
    proof. **No known cross-platform determinism residual remains.** (`-C target-cpu=native` stays
    banned; the in-process + x-platform goldens are the loud safety net.)
-3. **Density clears the bar** — `lbf` is a weak heuristic and `sparrow` is strip-packing; our
-   optimizer must reach ~85–90% on a *fixed irregular bin*. The spike measures it before we invest.
+3. **Density clears the bar** — **partially met.** Rectangular parts hit **92–99 %** (beats the
+   85–90 % target); irregular parts plateau at **~79 % (pentagon) / ~75 % (concave sheet)** — short of
+   85–90 %. Measured: this is a *structural* ceiling of the construction + GLS-insertion optimizer,
+   not a tuning gap — bigger budgets, a place-all-then-separate driver, a true-outline proxy, and
+   finer rotations were each tried and **none helped** (`docs/02` §11). Closing it needs exact NFP
+   placement or continuous-rotation GA — both major builds with real determinism risk, deferred
+   unless a consumer benchmark proves the gap costs material.
 4. **jagua edition 2024 / Rust ≥ ~1.85** in CI; no declared MSRV upstream → pin the toolchain.
 5. **Item holes unsupported in jagua 0.7.2** → interior-void via container quality-0 geometry,
    confirmed against the fork.

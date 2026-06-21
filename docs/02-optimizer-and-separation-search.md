@@ -358,9 +358,42 @@ Wiggle** (discrete rotations, no continuous trig); `SampleEval` ordering via exa
 canonical summation everywhere a float reduction feeds a decision (tracker dense-index sums; evaluator
 sorted-`HazKey` sums). `BTreeSet`/`SecondaryMap`/`slotmap` only.
 
-**Next levers if irregular density needs more:** tune the fixed budgets up (`SEP_CONFIG`); add the
-swap-on-retry / "place-all-then-separate" richer driver (§4.5); only then consider the exact-NFP
-penetration refinement (§7.2). The cross-platform golden (Phase 3) is the final determinism proof.
+**Density status:** the candidate "next levers" (bigger budget, the place-all-then-separate richer
+driver, a true-outline container proxy, finer rotations) were **measured and none helped** — the
+irregular density is at a *structural* ceiling, not a tuning one. See **§11**. The cross-platform
+golden (Phase 3) is the determinism proof.
+
+---
+
+## 11. Density tuning — what was tried and why it didn't help (negative results, 2026-06-21)
+
+After Phase 2b the realistic density sits at **rectangular 92–99 %**, **pentagon 79.1 % (23/40)**,
+**irregular L-sheet 74.7 %**. Four tuning levers were each implemented (or configured), **measured on
+`examples/density.rs`, and reverted** — record them so they are not re-tried:
+
+| Lever (what was tried) | Result | Why it failed |
+|---|---|---|
+| **Bigger fixed budget** — `SEP_CONFIG` ~doubled (150/75 samples, 300 iters, 6 strikes, 800 seed) | pentagon **79.1 % → 79.1 %** (no change); bricks +0.9 pp | The pentagon is **not budget-limited** — more search effort finds the *same* arrangement. |
+| **Place-all-then-separate richer driver** (§4.5) — seed all unplaced to a 100 %-area over-fill, separate the whole layout, remove the highest-weighted (most-stuck) part until feasible | pentagon **79.1 % → 75.7 % (regression)** and **~20× slower** (≈114 s vs ≈5 s) | A 100 %-area over-fill is far too aggressive for non-tiling parts (sparrow over-fills ~1 % per strip-shrink step; this over-fills ~18 %). The separator lands in a *worse* minimum and the remove-loop is expensive. A gentler over-fill is just the insertion driver again. |
+| **True-outline container proxy** — replace the bbox exterior quantifier with pole-penetration against the *actual* container outline (correct for concave boundaries) | L-sheet **74.7 % → 74.7 %** (no change) | The bottleneck for an irregular sheet is **construction** (which already respects the true outline via the CDE), *not* the separation proxy. Separation only runs for the unplaced tail, where the proxy change didn't place more. |
+| **Finer rotations** — 45° (8), 30° (12), **10° (36)** vs cardinal | pentagon **23/40 at every increment**; 7×7 square 96 % at every increment | Squares are rotation-invariant; for the pentagon the ceiling is the **search strategy**, not the orientation set. Finer rotations only add cost (and forfeit the future exact-cardinal-matrix nicety) for zero gain. |
+
+**The pentagon plateaus at exactly 23 placed across all four levers** → a robust local optimum. The
+one untried lever (sparrow's **two-item swap** diversifier, §4.4) is rated low-probability: 2× budget,
+global rearrangement, and 36 rotations all failed to escape the plateau, so a milder diversification
+is unlikely to.
+
+**Conclusion — the remaining gap is architectural, not a tuning knob.** Closing it would require a
+fundamentally different placement engine:
+- **Exact NFP (no-fit-polygon) placement** — the SoTA for irregular-nesting density, but a
+  numerical-robustness + determinism minefield (§7.2 explicitly says *avoid as a first build*).
+- **Continuous-rotation GA** — inherently non-deterministic; conflicts with the prime directive unless
+  very carefully seeded, and even then loses cut-realizability exactness.
+
+Both are major builds with real determinism risk — **not optimizations**. Given the engine is already
+dense *and* byte-deterministic across the fleet (the actual differentiator), banking the current
+result is the recommended posture; revisit NFP only if a consumer benchmark proves the density gap
+costs real material.
 
 ## References
 - sparrow — `https://github.com/JeroenGar/sparrow` · paper arXiv `2509.13329`.
