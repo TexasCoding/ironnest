@@ -20,5 +20,5 @@
 #[doc(inline)]
 pub use ironnest_optimizer::{
     MultiSheetSolution, NestSolution, Placement, Scalar, Sheet, nest, nest_multi,
-    nest_multi_per_item, nest_per_item,
+    nest_multi_per_item, nest_multistart, nest_multistart_per_item, nest_per_item,
 };

@@ -62,7 +62,12 @@ import-only-then-resorted, `Instant` is metadata). Keep it that way. The verifie
   (`crates/optimizer/src/prng.rs`) — no `rand` dep, so the exact bit-stream is version-independent
   and byte-stable forever. Explicit seed always; no `getrandom`/`rand::random()` fallback, ever.
 - **No `rayon` / threads on any placement-deciding path.** Single canonical worker; if parallel, fix
-  the reduction order. (Import-time `par_iter` is fine — it's re-sorted by id.)
+  the reduction order. (Import-time `par_iter` is fine — it's re-sorted by id.) **The one sanctioned
+  exception:** `nest_multistart`'s `parallel` feature runs the K independent best-of-K starts on
+  `std::thread::scope` threads — each start is the self-contained, golden-stable `nest_per_item` (own
+  PRNG/`Layout`, no shared state), results join in fixed k order, and the keep-best `total_cmp` argmax
+  runs after all joins, so no float reduction crosses a thread. Never thread *inside* a single
+  placement search. Proven by the golden re-run under `--features parallel` (CI, all 3 platforms).
 - **`BTreeMap`/`BTreeSet`/`slotmap` only** where order affects placement. Never std `HashMap`
   (per-process random iteration).
 - **No `f64::mul_add` / no fast-math.** Basic `+ - * / sqrt` and `powi` are IEEE-deterministic — safe.

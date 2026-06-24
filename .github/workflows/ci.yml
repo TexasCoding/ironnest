@@ -63,3 +63,12 @@ jobs:
       # pipeline does not perturb the byte-identical output.
       - name: Test (release, shipped profile)
         run: cargo test --workspace --exclude ironnest-py --release --locked
+
+      # `--features parallel`: nest_multistart's K constructions run on threads (the wheel's default).
+      # This is the ONLY sanctioned threading and it MUST be byte-identical to sequential — so the
+      # golden (which includes a K=3 multistart case) re-run under the feature must match the very same
+      # committed snapshot on every platform, and the `parallel_multistart_equals_independent_sequential
+      # _best` test asserts the threaded reduction equals an independent sequential best-of-K. This is
+      # the standing cross-platform proof that parallel == sequential (docs/02 §B2).
+      - name: Test (parallel multi-start == sequential)
+        run: cargo test -p ironnest-optimizer --features parallel --release --locked

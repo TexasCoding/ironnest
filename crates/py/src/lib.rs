@@ -11,7 +11,10 @@
 //! f64, so the marshalling is exact and introduces no nondeterminism: the wheel inherits the engine's
 //! byte-identical, cross-platform-reproducible output (proven by the Phase-3 golden).
 
-use ironnest_core::{Sheet, nest_multi_per_item as nest_multi_impl, nest_per_item as nest_impl};
+use ironnest_core::{
+    Sheet, nest_multi_per_item as nest_multi_impl,
+    nest_multistart_per_item as nest_multistart_impl, nest_per_item as nest_impl,
+};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyString;
@@ -159,6 +162,12 @@ fn extract_angles(elems: &[Bound<'_, PyAny>], ctx: &str) -> PyResult<Vec<f64>> {
 ///     Explicit PRNG seed. There is **no** entropy fallback — determinism is the contract.
 /// budget : int
 ///     Samples per item placement (a fixed budget; never a wall clock).
+/// restarts : int, optional
+///     Number of independent constructions to run from decorrelated seeds, keeping the **densest**
+///     result — a deterministic best-of-K "multi-start". Defaults to ``1``, which is byte-identical to
+///     the single-start nest. Higher values trade run time (≈ linear in ``restarts``) for packing
+///     density on heterogeneous parts, where a single greedy construction lands in a seed-dependent
+///     basin. Still fully cross-platform byte-identical for the same arguments.
 ///
 /// Returns
 /// -------
@@ -169,7 +178,7 @@ fn extract_angles(elems: &[Bound<'_, PyAny>], ctx: &str) -> PyResult<Vec<f64>> {
 ///
 /// The same arguments always produce a byte-identical result.
 #[pyfunction]
-#[pyo3(signature = (items, qty, container, holes, min_sep, rotations, seed, budget))]
+#[pyo3(signature = (items, qty, container, holes, min_sep, rotations, seed, budget, restarts=1))]
 #[allow(clippy::needless_pass_by_value)] // PyO3 marshals owned Vecs out of the Python objects
 #[allow(clippy::too_many_arguments)] // injected `py` GIL token + the oracle's input surface (mirrors the Rust API)
 fn nest(
@@ -182,6 +191,7 @@ fn nest(
     rotations: Bound<'_, PyAny>,
     seed: u64,
     budget: u64,
+    restarts: usize,
 ) -> PyResult<(Vec<PyPlacement>, Vec<usize>)> {
     if items.len() != qty.len() {
         return Err(PyValueError::new_err(format!(
@@ -204,9 +214,17 @@ fn nest(
     // contract: no threads run *inside* the solve (single canonical worker, CLAUDE.md), so output
     // stays byte-identical.
     let solution = py.detach(|| {
-        nest_impl(
-            &items, &qty, &container, &holes, min_sep, &rotations, seed, budget,
-        )
+        // `restarts <= 1` runs the single-start pipeline (byte-identical to the historical `nest`);
+        // `> 1` runs the deterministic best-of-K multi-start. Both honour the determinism contract.
+        if restarts <= 1 {
+            nest_impl(
+                &items, &qty, &container, &holes, min_sep, &rotations, seed, budget,
+            )
+        } else {
+            nest_multistart_impl(
+                &items, &qty, &container, &holes, min_sep, &rotations, seed, budget, restarts,
+            )
+        }
     });
 
     let placements = solution

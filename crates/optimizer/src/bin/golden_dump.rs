@@ -22,7 +22,7 @@
 //! - The placement emit order is `nest`'s own order (slotmap slot order — a pure function of the
 //!   deterministic op history); it is part of the contract, so it is dumped unsorted.
 
-use ironnest_optimizer::{Placement, Scalar, nest, nest_per_item};
+use ironnest_optimizer::{Placement, Scalar, nest, nest_multistart, nest_per_item};
 use std::fmt::Write as _;
 
 /// `w × h` axis-aligned rectangle, lower-left at the origin (CCW).
@@ -244,22 +244,45 @@ fn dump() -> String {
                 case.budget,
             ),
         };
-        for Placement {
-            item,
-            x,
-            y,
-            rotation_deg,
-        } in &sol.placements
-        {
-            writeln!(out, "{item} {x} {y} {rotation_deg}").unwrap();
-        }
-        write!(out, "unplaced").unwrap();
-        for id in &sol.unplaced {
-            write!(out, " {id}").unwrap();
-        }
-        writeln!(out).unwrap();
+        write_solution(&mut out, &sol.placements, &sol.unplaced);
     }
+
+    // Multi-start (best-of-K) determinism case — APPENDED after the corpus so every case above stays
+    // byte-for-byte (the K=1 path already equals `nest`; this exercises the K>1 best-of-area reduction
+    // over two heterogeneous item types and must be byte-identical on every platform too).
+    writeln!(out, "# multistart-mixed").unwrap();
+    let ms = nest_multistart(
+        &[rect(10.0, 10.0), rect(20.0, 5.0)],
+        &[4, 3],
+        &rect(50.0, 50.0),
+        &[],
+        0.0,
+        &CARDINAL,
+        13,
+        800,
+        3,
+    );
+    write_solution(&mut out, &ms.placements, &ms.unplaced);
+
     out
+}
+
+/// Renders one solution to the canonical `item x y rot` lines plus the `unplaced …` line.
+fn write_solution(out: &mut String, placements: &[Placement], unplaced: &[usize]) {
+    for Placement {
+        item,
+        x,
+        y,
+        rotation_deg,
+    } in placements
+    {
+        writeln!(out, "{item} {x} {y} {rotation_deg}").unwrap();
+    }
+    write!(out, "unplaced").unwrap();
+    for id in unplaced {
+        write!(out, " {id}").unwrap();
+    }
+    writeln!(out).unwrap();
 }
 
 fn main() {

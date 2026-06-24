@@ -89,6 +89,14 @@ pub struct SeparationEvaluator<'a> {
     container_bbox: Rect,
     /// Scratch shape (keeps its surrogate, which the proxy needs), transformed per candidate.
     shape_buff: SPolygon,
+    /// Scratch collision collector, reused (cleared, capacity retained) across every
+    /// [`Self::evaluate_sample`] call instead of allocating a fresh one per candidate pose — the
+    /// separator evaluates ~hundreds of poses per move. Reuse is byte-identical: the canonical
+    /// `terms` sort below makes the summed loss independent of this collector's contents/order.
+    collector: BasicHazardCollector,
+    /// Scratch `(HazKey, weighted term)` buffer, reused per candidate (sorted in place each time so
+    /// the float sum is canonical regardless of CDE traversal order).
+    terms: Vec<(HazKey, Scalar)>,
 }
 
 impl<'a> SeparationEvaluator<'a> {
@@ -99,6 +107,7 @@ impl<'a> SeparationEvaluator<'a> {
         item: &'a Item,
         current_pk: PItemKey,
     ) -> Self {
+        let cap = layout.placed_items.len() + 1;
         Self {
             layout,
             tracker,
@@ -106,6 +115,8 @@ impl<'a> SeparationEvaluator<'a> {
             current_pk,
             container_bbox: layout.container.outer_cd.bbox,
             shape_buff: (*item.shape_cd).clone(),
+            collector: BasicHazardCollector::with_capacity(cap),
+            terms: Vec::with_capacity(cap),
         }
     }
 
@@ -126,44 +137,52 @@ impl<'a> SeparationEvaluator<'a> {
             return SampleEval::Invalid;
         }
 
-        let mut collector = BasicHazardCollector::with_capacity(self.layout.placed_items.len() + 1);
+        // Reuse the scratch collector (cleared, capacity retained) instead of allocating per sample.
+        self.collector.clear();
         self.layout
             .cde()
-            .collect_poly_collisions(&self.shape_buff, &mut collector);
+            .collect_poly_collisions(&self.shape_buff, &mut self.collector);
 
-        if collector.is_empty() {
+        if self.collector.is_empty() {
             return SampleEval::Clear { loss: 0.0 };
         }
 
-        // Canonical summation: gather (HazKey, weighted term), sort by key, then sum — so the total
-        // is independent of the CDE's traversal order and byte-identical across platforms.
-        let mut terms: Vec<(HazKey, Scalar)> = collector
-            .iter()
-            .map(|(hkey, haz)| {
-                let term = match haz {
-                    HazardEntity::PlacedItem { pk: other_pk, .. } => {
-                        let other_shape = &self.layout.placed_items[*other_pk].shape;
-                        let loss = quantify_collision_poly_poly(other_shape, &self.shape_buff);
-                        loss * self.tracker.pair_weight(self.current_pk, *other_pk)
-                    }
-                    HazardEntity::Exterior => {
-                        let loss = quantify_collision_poly_container(
-                            &self.shape_buff,
-                            self.container_bbox,
-                        );
-                        loss * self.tracker.container_weight(self.current_pk)
-                    }
-                    // A hole / keep-out zone the part must avoid (the interior-void path); shares the
-                    // item's single static-hazard GLS weight with the exterior.
-                    HazardEntity::Hole { .. } | HazardEntity::InferiorQualityZone { .. } => {
-                        let hole_shape = &self.layout.cde().hazards_map[hkey].shape;
-                        let loss = quantify_collision_poly_hole(&self.shape_buff, hole_shape);
-                        loss * self.tracker.container_weight(self.current_pk)
-                    }
-                };
-                (hkey, term)
-            })
-            .collect();
+        // Canonical summation: gather (HazKey, weighted term) into the reused `terms` buffer, sort by
+        // key, then sum — so the total is independent of the CDE's traversal order and byte-identical
+        // across platforms. (Destructure so the map closure borrows only the read-only fields, leaving
+        // `terms`/`collector` free to be borrowed for the extend/iter.)
+        let Self {
+            layout,
+            tracker,
+            current_pk,
+            container_bbox,
+            shape_buff,
+            collector,
+            terms,
+            ..
+        } = self;
+        terms.clear();
+        terms.extend(collector.iter().map(|(hkey, haz)| {
+            let term = match haz {
+                HazardEntity::PlacedItem { pk: other_pk, .. } => {
+                    let other_shape = &layout.placed_items[*other_pk].shape;
+                    let loss = quantify_collision_poly_poly(other_shape, shape_buff);
+                    loss * tracker.pair_weight(*current_pk, *other_pk)
+                }
+                HazardEntity::Exterior => {
+                    let loss = quantify_collision_poly_container(shape_buff, *container_bbox);
+                    loss * tracker.container_weight(*current_pk)
+                }
+                // A hole / keep-out zone the part must avoid (the interior-void path); shares the
+                // item's single static-hazard GLS weight with the exterior.
+                HazardEntity::Hole { .. } | HazardEntity::InferiorQualityZone { .. } => {
+                    let hole_shape = &layout.cde().hazards_map[hkey].shape;
+                    let loss = quantify_collision_poly_hole(shape_buff, hole_shape);
+                    loss * tracker.container_weight(*current_pk)
+                }
+            };
+            (hkey, term)
+        }));
         terms.sort_unstable_by_key(|(hkey, _)| *hkey);
 
         let loss: Scalar = terms.iter().map(|(_, term)| *term).sum();

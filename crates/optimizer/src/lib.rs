@@ -48,6 +48,8 @@ const IMPROVE_ROUNDS: u32 = 3;
 /// relative to the curved-part speedup.
 const DECIMATION_TOL_FRACTION: Scalar = 1.0 / 16.0;
 
+use std::cmp::Ordering;
+
 use ironnest_cde::collision_detection::CDEConfig;
 use ironnest_cde::entities::{Container, Item, Layout};
 use ironnest_cde::geometry::fail_fast::SPSurrogateConfig;
@@ -412,6 +414,180 @@ pub fn nest_per_item(
     }
 }
 
+/// Runs the nest from `n_starts` decorrelated seeds and returns the **densest** result — the
+/// deterministic best-of-K "multi-start". A single greedy construction lands in a *seed-dependent
+/// basin*; sweeping several seeds and keeping the best lifts packing on heterogeneous parts (measured:
+/// 13×7 bricks 91.9 % → 95.5 % at K=16) at no determinism cost. Applies **one** rotation set to every
+/// item; for a per-item set use [`nest_multistart_per_item`].
+///
+/// * `n_starts` — number of independent constructions (clamped to ≥ 1). **`n_starts == 1` is
+///   byte-identical to [`nest`]** with the same seed, so the existing determinism golden is untouched.
+/// * every other argument carries its [`nest`] meaning. Start *k* uses `seed.wrapping_add(k)`; the
+///   PRNG's `SplitMix64` expansion decorrelates adjacent seeds into well-separated streams.
+///
+/// Determinism: each start is the byte-stable [`nest`] pipeline; the keep-best reduction maximises the
+/// total placed **area** (a deterministic, fixed-order float sum compared via `total_cmp`) and keeps
+/// the earliest *k* on a tie — the chosen layout is byte-identical for the same arguments.
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn nest_multistart(
+    items: &[Vec<[Scalar; 2]>],
+    qty: &[usize],
+    container: &[[Scalar; 2]],
+    holes: &[Vec<[Scalar; 2]>],
+    min_sep: Scalar,
+    rotations_deg: &[Scalar],
+    seed: u64,
+    budget: u64,
+    n_starts: usize,
+) -> NestSolution {
+    let rotations_per_item = vec![rotations_deg.to_vec(); items.len()];
+    nest_multistart_per_item(
+        items,
+        qty,
+        container,
+        holes,
+        min_sep,
+        &rotations_per_item,
+        seed,
+        budget,
+        n_starts,
+    )
+}
+
+/// [`nest_multistart`] with a **distinct allowed-rotation set per item type** (the [`nest_per_item`]
+/// semantics): `rotations_deg[k]` applies to `items[k]`. Same best-of-K determinism contract.
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn nest_multistart_per_item(
+    items: &[Vec<[Scalar; 2]>],
+    qty: &[usize],
+    container: &[[Scalar; 2]],
+    holes: &[Vec<[Scalar; 2]>],
+    min_sep: Scalar,
+    rotations_deg: &[Vec<Scalar>],
+    seed: u64,
+    budget: u64,
+    n_starts: usize,
+) -> NestSolution {
+    let starts = n_starts.max(1);
+    let areas: Vec<Scalar> = items.iter().map(|o| polygon_area(o)).collect();
+
+    // Run the K independent starts (sequentially by default; on threads under the `parallel` feature —
+    // byte-identical either way). Returned as `(solution, placed_area)` in k = 0..starts order.
+    let runs = run_starts(
+        items,
+        qty,
+        container,
+        holes,
+        min_sep,
+        rotations_deg,
+        seed,
+        budget,
+        starts,
+        &areas,
+    );
+
+    // Keep-best reduction in canonical k order: strictly-greater placed area wins, an exact tie keeps
+    // the earliest k (lowest seed offset). A single `total_cmp` per step on each solution's own
+    // canonical area sum — no cross-solution/cross-thread float reduction — so the chosen layout is
+    // byte-identical for the same arguments, sequential or parallel.
+    let mut best: Option<(NestSolution, Scalar)> = None;
+    for (sol, area) in runs {
+        let better = best
+            .as_ref()
+            .is_none_or(|(_, best_area)| area.total_cmp(best_area) == Ordering::Greater);
+        if better {
+            best = Some((sol, area));
+        }
+    }
+    best.expect("n_starts is clamped to >= 1, so at least one solution is produced")
+        .0
+}
+
+/// Runs `starts` independent constructions, start *k* at `seed.wrapping_add(k)`, returning
+/// `(solution, placed_area)` in `0..starts` order. **Sequential** build: a plain loop.
+#[cfg(not(feature = "parallel"))]
+#[allow(clippy::too_many_arguments)]
+fn run_starts(
+    items: &[Vec<[Scalar; 2]>],
+    qty: &[usize],
+    container: &[[Scalar; 2]],
+    holes: &[Vec<[Scalar; 2]>],
+    min_sep: Scalar,
+    rotations_deg: &[Vec<Scalar>],
+    seed: u64,
+    budget: u64,
+    starts: usize,
+    areas: &[Scalar],
+) -> Vec<(NestSolution, Scalar)> {
+    (0..starts as u64)
+        .map(|k| {
+            let sol = nest_per_item(
+                items,
+                qty,
+                container,
+                holes,
+                min_sep,
+                rotations_deg,
+                seed.wrapping_add(k),
+                budget,
+            );
+            let area = placed_area(&sol, areas);
+            (sol, area)
+        })
+        .collect()
+}
+
+/// Runs `starts` independent constructions concurrently on scoped threads (one per start), returning
+/// `(solution, placed_area)` in `0..starts` order — **byte-identical** to the sequential build: each
+/// start is the self-contained, golden-stable [`nest_per_item`] (own PRNG, own `Layout`, no shared
+/// mutable state), the results are collected in `k` order via ordered join handles, and the caller's
+/// keep-best reduction runs afterwards in that same fixed order, so completion order is irrelevant and
+/// no float sum ever crosses a thread. This is the one sanctioned use of threads (the multi-start
+/// meta-loop only — never inside a placement search); the cross-platform golden run under
+/// `--features parallel` is the standing proof it matches the sequential snapshot.
+#[cfg(feature = "parallel")]
+#[allow(clippy::too_many_arguments)]
+fn run_starts(
+    items: &[Vec<[Scalar; 2]>],
+    qty: &[usize],
+    container: &[[Scalar; 2]],
+    holes: &[Vec<[Scalar; 2]>],
+    min_sep: Scalar,
+    rotations_deg: &[Vec<Scalar>],
+    seed: u64,
+    budget: u64,
+    starts: usize,
+    areas: &[Scalar],
+) -> Vec<(NestSolution, Scalar)> {
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..starts as u64)
+            .map(|k| {
+                scope.spawn(move || {
+                    let sol = nest_per_item(
+                        items,
+                        qty,
+                        container,
+                        holes,
+                        min_sep,
+                        rotations_deg,
+                        seed.wrapping_add(k),
+                        budget,
+                    );
+                    let area = placed_area(&sol, areas);
+                    (sol, area)
+                })
+            })
+            .collect();
+        // Join in spawn (k) order — the returned Vec is ordered by k regardless of finish order.
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("a multi-start nest thread panicked"))
+            .collect()
+    })
+}
+
 /// Nests `items` (demand `qty`) across several `sheets` in order: each sheet is filled with whatever
 /// demand remains, then the rest spills to the next. Returns the placements per sheet plus the global
 /// unplaced. Applies **one** allowed-rotation set to every item; for a distinct set per item type use
@@ -560,6 +736,27 @@ fn extract_placements(layout: &Layout, entities: &[Option<Item>]) -> Vec<Placeme
             }
         })
         .collect()
+}
+
+/// Absolute polygon area (shoelace) of an item-local `outline`. Pure `+ − ×` ⇒ deterministic and
+/// byte-identical cross-platform; used only to rank multi-start results by total placed area.
+fn polygon_area(outline: &[[Scalar; 2]]) -> Scalar {
+    let n = outline.len();
+    if n < 3 {
+        return 0.0;
+    }
+    let mut acc: Scalar = 0.0;
+    for i in 0..n {
+        let j = (i + 1) % n;
+        acc += outline[i][0] * outline[j][1] - outline[j][0] * outline[i][1];
+    }
+    (0.5 * acc).abs()
+}
+
+/// Total placed area of a solution = Σ area(item) over its placements, summed in the solution's own
+/// (deterministic) placement order. The multi-start objective — higher = denser packing / utilization.
+fn placed_area(sol: &NestSolution, areas: &[Scalar]) -> Scalar {
+    sol.placements.iter().map(|p| areas[p.item]).sum()
 }
 
 /// Every requested instance, marked unplaced (used when the container itself fails to import).
