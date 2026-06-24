@@ -6,7 +6,10 @@
 //! interior-void holes, multi-sheet, and the in-process determinism golden (same inputs →
 //! byte-identical placements).
 
-use ironnest_optimizer::{Scalar, Sheet, nest, nest_multi, nest_multi_per_item, nest_per_item};
+use ironnest_optimizer::{
+    Scalar, Sheet, nest, nest_multi, nest_multi_per_item, nest_multistart,
+    nest_multistart_per_item, nest_per_item,
+};
 
 /// An axis-aligned `w × h` rectangle with its lower-left corner at the origin (CCW).
 fn rect(w: Scalar, h: Scalar) -> Vec<[Scalar; 2]> {
@@ -81,6 +84,81 @@ fn determinism_same_seed_is_byte_identical() {
         "same inputs + seed must produce byte-identical placements"
     );
     assert!(!a.placements.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// Multi-start (best-of-K) — the deterministic density lever
+// ---------------------------------------------------------------------------
+
+#[test]
+fn multistart_k1_is_byte_identical_to_single_nest() {
+    // THE load-bearing invariant: n_starts == 1 runs exactly one start at seed.wrapping_add(0) ==
+    // seed, so it must equal nest() bit-for-bit — this is what keeps the existing golden valid.
+    let items = vec![rect(10.0, 10.0), rect(20.0, 5.0)];
+    let qty = [8, 4];
+    let container = rect(100.0, 100.0);
+    let single = nest(&items, &qty, &container, &[], 1.0, &CARDINAL, 12345, 2000);
+    let multi = nest_multistart(
+        &items,
+        &qty,
+        &container,
+        &[],
+        1.0,
+        &CARDINAL,
+        12345,
+        2000,
+        1,
+    );
+    assert_eq!(single, multi, "n_starts=1 must be byte-identical to nest()");
+    // n_starts=0 is clamped to 1 (never panics, never empty-reduces).
+    let zero = nest_multistart(
+        &items,
+        &qty,
+        &container,
+        &[],
+        1.0,
+        &CARDINAL,
+        12345,
+        2000,
+        0,
+    );
+    assert_eq!(single, zero, "n_starts=0 clamps to a single start");
+}
+
+#[test]
+fn multistart_is_deterministic() {
+    // A fast all-placing case (9× 10×10 in 35×35 → no separation): best-of-K must be byte-identical
+    // for the same arguments. K=3 exercises the seed sweep + the area-argmax reduction.
+    let items = vec![rect(10.0, 10.0)];
+    let container = rect(35.0, 35.0);
+    let a = nest_multistart(&items, &[9], &container, &[], 0.0, &CARDINAL, 7, 800, 3);
+    let b = nest_multistart(&items, &[9], &container, &[], 0.0, &CARDINAL, 7, 800, 3);
+    assert_eq!(a, b, "best-of-K must be byte-identical for the same args");
+    // The per-item path with a broadcast set must match the uniform multistart (same invariant the
+    // single-start paths hold) — guards the K-loop against per-item seed drift.
+    let broadcast = vec![CARDINAL.to_vec()];
+    let per_item =
+        nest_multistart_per_item(&items, &[9], &container, &[], 0.0, &broadcast, 7, 800, 3);
+    assert_eq!(
+        a, per_item,
+        "broadcast per-item multistart must equal uniform"
+    );
+}
+
+#[test]
+fn multistart_never_worse_than_a_single_start() {
+    // best-of-K considers k=0 (seed.wrapping_add(0) == seed) among its candidates and keeps the
+    // max-area result, so it can never place LESS total area than the single start at that seed.
+    let items = vec![rect(7.0, 7.0)];
+    let container = rect(40.0, 40.0);
+    let single = nest(&items, &[40], &container, &[], 0.0, &CARDINAL, 1, 800);
+    let multi = nest_multistart(&items, &[40], &container, &[], 0.0, &CARDINAL, 1, 800, 4);
+    assert!(
+        multi.placements.len() >= single.placements.len(),
+        "best-of-4 ({}) must place at least the single start ({})",
+        multi.placements.len(),
+        single.placements.len(),
+    );
 }
 
 #[test]
