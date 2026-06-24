@@ -161,6 +161,59 @@ fn multistart_never_worse_than_a_single_start() {
     );
 }
 
+#[cfg(feature = "parallel")]
+#[test]
+fn parallel_multistart_equals_independent_sequential_best() {
+    // Under --features parallel, nest_multistart runs the K starts on threads. It must equal an
+    // INDEPENDENT sequential best-of-K computed here by calling nest_per_item directly. Homogeneous
+    // parts ⇒ max placed area == max placed count, so this count-argmax (earliest k on a tie) matches
+    // the engine's area-argmax exactly. This is the local parallel==sequential byte-identity check;
+    // the cross-platform proof is the golden run under --features parallel.
+    let items = vec![rect(13.0, 7.0)];
+    let qty = [18usize];
+    let container = rect(45.0, 45.0);
+    let (k, budget, seed) = (4u64, 700u64, 1u64);
+
+    let mut manual: Option<ironnest_optimizer::NestSolution> = None;
+    for ki in 0..k {
+        let sol = nest_per_item(
+            &items,
+            &qty,
+            &container,
+            &[],
+            0.0,
+            &[CARDINAL.to_vec()],
+            seed.wrapping_add(ki),
+            budget,
+        );
+        // Iterate k ascending, replace only on STRICTLY-more placements → keeps the earliest k on a
+        // tie, exactly as the engine's reduction does.
+        let better = manual
+            .as_ref()
+            .is_none_or(|m| sol.placements.len() > m.placements.len());
+        if better {
+            manual = Some(sol);
+        }
+    }
+
+    let parallel = nest_multistart(
+        &items,
+        &qty,
+        &container,
+        &[],
+        0.0,
+        &CARDINAL,
+        seed,
+        budget,
+        k as usize,
+    );
+    assert_eq!(
+        parallel,
+        manual.expect("k >= 1"),
+        "parallel multistart must be byte-identical to the independent sequential best-of-K"
+    );
+}
+
 #[test]
 fn per_item_rotations_are_respected_per_type() {
     // Two part types with DIFFERENT allowed sets in one nest: a square pinned axis-aligned ({0,90})

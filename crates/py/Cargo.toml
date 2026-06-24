@@ -19,5 +19,8 @@ crate-type = ["cdylib"]
 # The public façade crate (package `ironnest`) — renamed locally to `ironnest_core` so its lib name
 # does not clash with THIS crate's `[lib] name = "ironnest"` (the Python import name / abi3 init
 # symbol `PyInit_ironnest`).
-ironnest_core = { package = "ironnest", path = "../ironnest" }
+# `parallel` is ON for the wheel: `restarts > 1` runs the multi-start constructions on threads (the
+# GIL is already released around the solve). Byte-identical to sequential — proven by the golden run
+# under `--features parallel` — so the wheel's determinism contract is unchanged.
+ironnest_core = { package = "ironnest", path = "../ironnest", features = ["parallel"] }
 pyo3 = { workspace = true }

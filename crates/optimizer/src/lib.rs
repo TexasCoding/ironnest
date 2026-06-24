@@ -473,22 +473,27 @@ pub fn nest_multistart_per_item(
     let starts = n_starts.max(1);
     let areas: Vec<Scalar> = items.iter().map(|o| polygon_area(o)).collect();
 
+    // Run the K independent starts (sequentially by default; on threads under the `parallel` feature —
+    // byte-identical either way). Returned as `(solution, placed_area)` in k = 0..starts order.
+    let runs = run_starts(
+        items,
+        qty,
+        container,
+        holes,
+        min_sep,
+        rotations_deg,
+        seed,
+        budget,
+        starts,
+        &areas,
+    );
+
+    // Keep-best reduction in canonical k order: strictly-greater placed area wins, an exact tie keeps
+    // the earliest k (lowest seed offset). A single `total_cmp` per step on each solution's own
+    // canonical area sum — no cross-solution/cross-thread float reduction — so the chosen layout is
+    // byte-identical for the same arguments, sequential or parallel.
     let mut best: Option<(NestSolution, Scalar)> = None;
-    for k in 0..starts as u64 {
-        let sol = nest_per_item(
-            items,
-            qty,
-            container,
-            holes,
-            min_sep,
-            rotations_deg,
-            seed.wrapping_add(k),
-            budget,
-        );
-        let area = placed_area(&sol, &areas);
-        // Strictly-greater placed area wins; an exact tie keeps the earlier k (lowest seed offset).
-        // The decision is a single `total_cmp` on each solution's own canonical area sum — no
-        // cross-solution float reduction — so it is byte-identical for the same arguments.
+    for (sol, area) in runs {
         let better = best
             .as_ref()
             .is_none_or(|(_, best_area)| area.total_cmp(best_area) == Ordering::Greater);
@@ -498,6 +503,89 @@ pub fn nest_multistart_per_item(
     }
     best.expect("n_starts is clamped to >= 1, so at least one solution is produced")
         .0
+}
+
+/// Runs `starts` independent constructions, start *k* at `seed.wrapping_add(k)`, returning
+/// `(solution, placed_area)` in `0..starts` order. **Sequential** build: a plain loop.
+#[cfg(not(feature = "parallel"))]
+#[allow(clippy::too_many_arguments)]
+fn run_starts(
+    items: &[Vec<[Scalar; 2]>],
+    qty: &[usize],
+    container: &[[Scalar; 2]],
+    holes: &[Vec<[Scalar; 2]>],
+    min_sep: Scalar,
+    rotations_deg: &[Vec<Scalar>],
+    seed: u64,
+    budget: u64,
+    starts: usize,
+    areas: &[Scalar],
+) -> Vec<(NestSolution, Scalar)> {
+    (0..starts as u64)
+        .map(|k| {
+            let sol = nest_per_item(
+                items,
+                qty,
+                container,
+                holes,
+                min_sep,
+                rotations_deg,
+                seed.wrapping_add(k),
+                budget,
+            );
+            let area = placed_area(&sol, areas);
+            (sol, area)
+        })
+        .collect()
+}
+
+/// Runs `starts` independent constructions concurrently on scoped threads (one per start), returning
+/// `(solution, placed_area)` in `0..starts` order — **byte-identical** to the sequential build: each
+/// start is the self-contained, golden-stable [`nest_per_item`] (own PRNG, own `Layout`, no shared
+/// mutable state), the results are collected in `k` order via ordered join handles, and the caller's
+/// keep-best reduction runs afterwards in that same fixed order, so completion order is irrelevant and
+/// no float sum ever crosses a thread. This is the one sanctioned use of threads (the multi-start
+/// meta-loop only — never inside a placement search); the cross-platform golden run under
+/// `--features parallel` is the standing proof it matches the sequential snapshot.
+#[cfg(feature = "parallel")]
+#[allow(clippy::too_many_arguments)]
+fn run_starts(
+    items: &[Vec<[Scalar; 2]>],
+    qty: &[usize],
+    container: &[[Scalar; 2]],
+    holes: &[Vec<[Scalar; 2]>],
+    min_sep: Scalar,
+    rotations_deg: &[Vec<Scalar>],
+    seed: u64,
+    budget: u64,
+    starts: usize,
+    areas: &[Scalar],
+) -> Vec<(NestSolution, Scalar)> {
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..starts as u64)
+            .map(|k| {
+                scope.spawn(move || {
+                    let sol = nest_per_item(
+                        items,
+                        qty,
+                        container,
+                        holes,
+                        min_sep,
+                        rotations_deg,
+                        seed.wrapping_add(k),
+                        budget,
+                    );
+                    let area = placed_area(&sol, areas);
+                    (sol, area)
+                })
+            })
+            .collect();
+        // Join in spawn (k) order — the returned Vec is ordered by k regardless of finish order.
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("a multi-start nest thread panicked"))
+            .collect()
+    })
 }
 
 /// Nests `items` (demand `qty`) across several `sheets` in order: each sheet is filled with whatever

@@ -10,5 +10,10 @@ publish      = false
 [lints]
 workspace = true
 
+[features]
+# Forwards to the optimizer's `parallel` feature: run `nest_multistart`'s K constructions on threads
+# (byte-identical to sequential — see the optimizer manifest). Off by default; the wheel turns it on.
+parallel = ["ironnest-optimizer/parallel"]
+
 [dependencies]
 ironnest-optimizer = { workspace = true }

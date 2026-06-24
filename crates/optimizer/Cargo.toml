@@ -10,6 +10,15 @@ publish      = false
 [lints]
 workspace = true
 
+[features]
+# `parallel` runs the multi-start (`nest_multistart`) constructions on `std::thread::scope` threads
+# instead of sequentially. It is BYTE-IDENTICAL to the sequential path (each start is the independent,
+# golden-stable `nest_per_item`; the keep-best reduction runs after all joins in fixed k order, with no
+# float sum crossing a thread) — the cross-platform golden run under this feature must match the same
+# snapshot. Off by default; std-only, no new dependency. NOTE: this is the ONLY sanctioned threading,
+# and only on the multi-start meta-loop — never inside a single placement search (CLAUDE.md).
+parallel = []
+
 [dependencies]
 ironnest-geo = { workspace = true }
 ironnest-cde = { workspace = true }
