@@ -423,7 +423,7 @@ pub fn nest_per_item(
 /// * `n_starts` — number of independent constructions (clamped to ≥ 1). **`n_starts == 1` is
 ///   byte-identical to [`nest`]** with the same seed, so the existing determinism golden is untouched.
 /// * every other argument carries its [`nest`] meaning. Start *k* uses `seed.wrapping_add(k)`; the
-///   PRNG's SplitMix64 expansion decorrelates adjacent seeds into well-separated streams.
+///   PRNG's `SplitMix64` expansion decorrelates adjacent seeds into well-separated streams.
 ///
 /// Determinism: each start is the byte-stable [`nest`] pipeline; the keep-best reduction maximises the
 /// total placed **area** (a deterministic, fixed-order float sum compared via `total_cmp`) and keeps

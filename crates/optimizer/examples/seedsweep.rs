@@ -32,7 +32,7 @@ fn sweep(
     let mut worst = usize::MAX;
     for seed in 1..=seeds {
         let sol = nest(
-            &[item.clone()],
+            std::slice::from_ref(&item),
             &[qty],
             &container,
             &[],

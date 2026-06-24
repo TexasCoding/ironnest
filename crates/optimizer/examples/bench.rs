@@ -51,7 +51,7 @@ fn probe(
     let mut placed = 0usize;
     let ms = best_ms(reps, || {
         let sol = nest(
-            &[item.clone()],
+            std::slice::from_ref(&item),
             &[qty],
             &container,
             &[],
@@ -160,7 +160,7 @@ fn multistart_probe(
         let mut placed = 0usize;
         let ms = best_ms(1, || {
             let sol = nest_multistart(
-                &[item.clone()],
+                std::slice::from_ref(&item),
                 &[qty],
                 &container,
                 &[],
