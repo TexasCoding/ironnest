@@ -607,18 +607,7 @@ pub fn nest_multi(
     seed: u64,
     budget: u64,
 ) -> MultiSheetSolution {
-    // Broadcast the single rotation set to every item, then run the per-item path (byte-identical —
-    // see [`nest`]).
-    let rotations_per_item = vec![rotations_deg.to_vec(); items.len()];
-    nest_multi_per_item(
-        items,
-        qty,
-        sheets,
-        min_sep,
-        &rotations_per_item,
-        seed,
-        budget,
-    )
+    nest_multi_multistart(items, qty, sheets, min_sep, rotations_deg, seed, budget, 1)
 }
 
 /// Like [`nest_multi`], but with a **distinct allowed-rotation set per item type** — `rotations_deg[k]`
@@ -634,6 +623,58 @@ pub fn nest_multi_per_item(
     rotations_deg: &[Vec<Scalar>],
     seed: u64,
     budget: u64,
+) -> MultiSheetSolution {
+    nest_multi_multistart_per_item(items, qty, sheets, min_sep, rotations_deg, seed, budget, 1)
+}
+
+/// [`nest_multi`] with **deterministic best-of-K multi-start applied to every sheet**: each sheet is
+/// packed with the densest of `n_starts` decorrelated-seed runs *before* the leftover demand spills to
+/// the next. Maximising each sheet's fill directly reduces what spills forward, so fewer sheets / less
+/// material are used on a mixed-parts job. Applies **one** rotation set to every item; for a per-item
+/// set use [`nest_multi_multistart_per_item`].
+///
+/// `n_starts` is clamped to ≥ 1; **`n_starts == 1` is byte-identical to [`nest_multi`]**, so existing
+/// behaviour is unchanged. Same determinism contract — the per-sheet best-of-K is byte-deterministic
+/// (see [`nest_multistart`]); under the `parallel` feature each sheet's K starts run on threads.
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn nest_multi_multistart(
+    items: &[Vec<[Scalar; 2]>],
+    qty: &[usize],
+    sheets: &[Sheet],
+    min_sep: Scalar,
+    rotations_deg: &[Scalar],
+    seed: u64,
+    budget: u64,
+    n_starts: usize,
+) -> MultiSheetSolution {
+    let rotations_per_item = vec![rotations_deg.to_vec(); items.len()];
+    nest_multi_multistart_per_item(
+        items,
+        qty,
+        sheets,
+        min_sep,
+        &rotations_per_item,
+        seed,
+        budget,
+        n_starts,
+    )
+}
+
+/// [`nest_multi_multistart`] with a **distinct allowed-rotation set per item type** (the
+/// [`nest_per_item`] semantics). Each sheet runs a best-of-`n_starts` pack against the remaining
+/// demand; `n_starts == 1` reduces to [`nest_multi_per_item`] byte-for-byte.
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn nest_multi_multistart_per_item(
+    items: &[Vec<[Scalar; 2]>],
+    qty: &[usize],
+    sheets: &[Sheet],
+    min_sep: Scalar,
+    rotations_deg: &[Vec<Scalar>],
+    seed: u64,
+    budget: u64,
+    n_starts: usize,
 ) -> MultiSheetSolution {
     assert_eq!(
         items.len(),
@@ -651,9 +692,11 @@ pub fn nest_multi_per_item(
 
     for (i, sheet) in sheets.iter().enumerate() {
         // A distinct, deterministic per-sheet seed (SplitMix64 in the PRNG de-correlates adjacent
-        // seeds, so `seed + i` gives well-separated streams).
+        // seeds, so `seed + i` gives well-separated streams). Each sheet's K best-of-K runs then
+        // derive from that seed (`sheet_seed + k`); the K runs of a given sheet are decorrelated from
+        // each other — the property best-of-K relies on — independent of the cross-sheet stride.
         let sheet_seed = seed.wrapping_add(i as u64);
-        let sol = nest_per_item(
+        let sol = nest_multistart_per_item(
             items,
             &remaining,
             &sheet.outline,
@@ -662,6 +705,7 @@ pub fn nest_multi_per_item(
             rotations_deg,
             sheet_seed,
             budget,
+            n_starts,
         );
 
         for p in &sol.placements {

@@ -7,8 +7,8 @@
 //! byte-identical placements).
 
 use ironnest_optimizer::{
-    Scalar, Sheet, nest, nest_multi, nest_multi_per_item, nest_multistart,
-    nest_multistart_per_item, nest_per_item,
+    Scalar, Sheet, nest, nest_multi, nest_multi_multistart, nest_multi_multistart_per_item,
+    nest_multi_per_item, nest_multistart, nest_multistart_per_item, nest_per_item,
 };
 
 /// An axis-aligned `w × h` rectangle with its lower-left corner at the origin (CCW).
@@ -673,6 +673,90 @@ fn multi_sheet_demand_exceeding_capacity_no_underflow() {
     let placed: usize = sol.per_sheet.iter().map(Vec::len).sum();
     assert_eq!(placed, 1, "only one 10×10 fits the single 12×12 sheet");
     assert_eq!(sol.unplaced.len(), 9);
+}
+
+// ---------------------------------------------------------------------------
+// Multi-sheet multi-start (best-of-K per sheet)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn multi_sheet_multistart_k1_is_byte_identical_to_nest_multi() {
+    // restarts=1 must equal nest_multi bit-for-bit (keeps the existing multi-sheet behaviour) — the
+    // same load-bearing invariant the single-sheet path holds.
+    let items = vec![rect(10.0, 10.0)];
+    let sheets = vec![
+        Sheet {
+            outline: rect(35.0, 35.0),
+            holes: vec![],
+        },
+        Sheet {
+            outline: rect(35.0, 35.0),
+            holes: vec![],
+        },
+    ];
+    let single = nest_multi(&items, &[16], &sheets, 0.0, &CARDINAL, 9, 1200);
+    let multi = nest_multi_multistart(&items, &[16], &sheets, 0.0, &CARDINAL, 9, 1200, 1);
+    assert_eq!(single, multi, "restarts=1 must equal nest_multi");
+    // n_starts=0 clamps to 1.
+    let zero = nest_multi_multistart(&items, &[16], &sheets, 0.0, &CARDINAL, 9, 1200, 0);
+    assert_eq!(single, zero, "restarts=0 clamps to a single start");
+}
+
+#[test]
+fn multi_sheet_multistart_is_deterministic_and_broadcast_matches() {
+    let items = vec![rect(13.0, 7.0)];
+    let sheets = vec![
+        Sheet {
+            outline: rect(50.0, 50.0),
+            holes: vec![],
+        },
+        Sheet {
+            outline: rect(50.0, 50.0),
+            holes: vec![],
+        },
+    ];
+    let a = nest_multi_multistart(&items, &[40], &sheets, 0.0, &CARDINAL, 1, 1000, 3);
+    let b = nest_multi_multistart(&items, &[40], &sheets, 0.0, &CARDINAL, 1, 1000, 3);
+    assert_eq!(
+        a, b,
+        "multi-sheet best-of-K must be byte-identical for the same args"
+    );
+    let broadcast = vec![CARDINAL.to_vec()];
+    let per_item =
+        nest_multi_multistart_per_item(&items, &[40], &sheets, 0.0, &broadcast, 1, 1000, 3);
+    assert_eq!(
+        a, per_item,
+        "broadcast per-item multi-sheet multistart must equal uniform"
+    );
+}
+
+#[test]
+fn multi_sheet_multistart_never_places_fewer_than_single() {
+    // Homogeneous parts ⇒ each sheet's best-of-K places ≥ the single start on the same remaining, and
+    // the greedy spill carries that forward (a denser earlier sheet leaves at most that many fewer for
+    // the next), so the total placed can never drop below the single-start total.
+    let items = vec![rect(13.0, 7.0)];
+    let sheets = vec![
+        Sheet {
+            outline: rect(50.0, 50.0),
+            holes: vec![],
+        },
+        Sheet {
+            outline: rect(50.0, 50.0),
+            holes: vec![],
+        },
+    ];
+    let placed = |s: &ironnest_optimizer::MultiSheetSolution| -> usize {
+        s.per_sheet.iter().map(Vec::len).sum()
+    };
+    let single = nest_multi(&items, &[40], &sheets, 0.0, &CARDINAL, 1, 1000);
+    let multi = nest_multi_multistart(&items, &[40], &sheets, 0.0, &CARDINAL, 1, 1000, 4);
+    assert!(
+        placed(&multi) >= placed(&single),
+        "best-of-4 multi-sheet ({}) must place at least the single start ({})",
+        placed(&multi),
+        placed(&single),
+    );
 }
 
 // ---------------------------------------------------------------------------

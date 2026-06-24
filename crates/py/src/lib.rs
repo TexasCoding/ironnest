@@ -12,8 +12,9 @@
 //! byte-identical, cross-platform-reproducible output (proven by the Phase-3 golden).
 
 use ironnest_core::{
-    Sheet, nest_multi_per_item as nest_multi_impl,
-    nest_multistart_per_item as nest_multistart_impl, nest_per_item as nest_impl,
+    Sheet, nest_multi_multistart_per_item as nest_multi_multistart_impl,
+    nest_multi_per_item as nest_multi_impl, nest_multistart_per_item as nest_multistart_impl,
+    nest_per_item as nest_impl,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -246,6 +247,11 @@ fn nest(
 ///     identically.
 /// sheets : list[tuple[list[tuple[float, float]], list[list[tuple[float, float]]]]]
 ///     Each sheet is ``(outline, holes)`` — a boundary outline plus its keep-out holes.
+/// restarts : int, optional
+///     Best-of-K multi-start applied **per sheet** (default ``1`` = byte-identical to the historical
+///     behaviour). Each sheet is packed with the densest of ``restarts`` decorrelated-seed runs before
+///     leftover demand spills to the next, so fewer sheets / less material are used on a mixed-parts
+///     job. Same determinism contract; the K runs of each sheet execute in parallel (GIL released).
 ///
 /// Returns
 /// -------
@@ -256,7 +262,7 @@ fn nest(
 /// Each sheet is nested with a seed derived deterministically from `seed`, so the result is
 /// byte-identical for the same arguments.
 #[pyfunction]
-#[pyo3(signature = (items, qty, sheets, min_sep, rotations, seed, budget))]
+#[pyo3(signature = (items, qty, sheets, min_sep, rotations, seed, budget, restarts=1))]
 #[allow(clippy::needless_pass_by_value)]
 #[allow(clippy::too_many_arguments)] // `py` is the injected GIL token (not an oracle input); the rest are the oracle's input surface
 fn nest_multi(
@@ -268,6 +274,7 @@ fn nest_multi(
     rotations: Bound<'_, PyAny>,
     seed: u64,
     budget: u64,
+    restarts: usize,
 ) -> PyResult<(Vec<Vec<PyPlacement>>, Vec<usize>)> {
     if items.len() != qty.len() {
         return Err(PyValueError::new_err(format!(
@@ -287,8 +294,17 @@ fn nest_multi(
         .collect();
 
     // Release the GIL for the solve — see the note in `nest` for the why and the safety argument.
-    let solution =
-        py.detach(|| nest_multi_impl(&items, &qty, &sheets, min_sep, &rotations, seed, budget));
+    // `restarts <= 1` is the historical single-start spill; `> 1` packs each sheet best-of-K. Both
+    // honour the determinism contract.
+    let solution = py.detach(|| {
+        if restarts <= 1 {
+            nest_multi_impl(&items, &qty, &sheets, min_sep, &rotations, seed, budget)
+        } else {
+            nest_multi_multistart_impl(
+                &items, &qty, &sheets, min_sep, &rotations, seed, budget, restarts,
+            )
+        }
+    });
 
     let per_sheet = solution
         .per_sheet
