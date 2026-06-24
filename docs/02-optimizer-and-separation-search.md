@@ -395,6 +395,41 @@ dense *and* byte-deterministic across the fleet (the actual differentiator), ban
 result is the recommended posture; revisit NFP only if a consumer benchmark proves the density gap
 costs real material.
 
+### 11.1 Round 2 (2026-06-23): profiling, the breadth lever that *worked*, and two more dead ends
+
+A second pass revisited the "architectural ceiling" conclusion above. Two findings refine it.
+
+**Profile first.** Per-phase timing (`examples/bench.rs`) shows the **separation search is 97–99 % of
+wall-clock** on any nest with an unplaced tail (pentagon: 3330 ms of 3340 ms; bricks: 2390/2440 ms);
+construction + improve are single-digit ms. The cost is irreducible per-sample collision-query +
+pole-pair proxy compute across a well-tuned budget. Consequence: the candidate "quick perf wins"
+(collector reuse, hazkey cache, incremental loss) are each ~0 — they touch <0.1 % of runtime. Collector
+reuse was kept as byte-identical hygiene; the others were dropped as measured non-levers.
+
+**The breadth lever §11 missed: multi-start.** §11 round-1 only ever tested *depth* (one seed/ordering,
+more budget → same basin). It never tested *breadth* — K **decorrelated seeds**, keep the densest. That
+is fully byte-deterministic (each start is the golden-stable pipeline; the keep-best reduction is an
+integer/`total_cmp` argmax over placed area, earliest-k on tie — no float sum on the decision path) and
+it **works on heterogeneous parts**: 13×7 bricks **91.9 % → 95.5 %** at K=8 (`examples/seedsweep.rs`,
+distribution `{101:1, 102:4, 104:4, 105:7}` over 16 seeds). Shipped as `nest_multistart` /
+`nest_multistart_per_item` (additive API; `n_starts=1` is byte-identical to `nest`) + a `parallel`
+cargo feature that runs the K starts on `std::thread::scope` threads (3.6× faster, byte-identical — the
+golden re-runs under `--features parallel` cross-platform). The pentagon shows **zero** seed spread
+(`{22:12, 23:4}`, best = 23) — its cap is genuinely architectural; multi-start cannot move it.
+
+**Two more dead ends** (measured on `examples/bench.rs`, reverted):
+
+| Lever (what was tried) | Result | Why it failed |
+|---|---|---|
+| **Structured anchor seeding (B3)** — a deterministic G×G LBF grid per rotation, competing additively with the random search | pentagon **23**, bricks **101**, 7×7 **196** — **no change anywhere** | `place_dropped`'s bottom-left slide already snaps loose random samples to the same contacts; structured coverage reaches nothing the slide didn't. |
+| **ILS ruin-and-recreate (C2)** — evict K placed parts, re-insert via the separator, keep if ≥ (the diversifier §11 called "untried") | pentagon **23 (cap holds)**, bricks **101 → 102 (+1)**, **~4.5× slower** | The one untested diversifier, finally tested: it does **not** break the pentagon cap, and its +1 brick is **strictly dominated** by multi-start's +4 (which also parallelises). Confirms §11's architectural-ceiling diagnosis is robust. |
+
+**Revised conclusion.** The *pentagon-class* gap is still architectural (NFP / continuous rotation —
+unchanged). But the **heterogeneous-parts** gap §11 attributed to that ceiling was partly a *breadth*
+gap, and best-of-K multi-start closes a chunk of it deterministically. For the consumer's mixed corpus
+(the real target), `restarts=N` is the lever — benchmark there to pick K. Every separation- or
+construction-side micro-tweak (B3, C2, and the §11 four) is dominated by it.
+
 ## References
 - sparrow — `https://github.com/JeroenGar/sparrow` · paper arXiv `2509.13329`.
 - jagua-rs CDE — DOI `10.1287/ijoc.2024.1025` · arXiv `2508.08341` ·
